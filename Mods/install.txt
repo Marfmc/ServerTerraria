@@ -1,0 +1,13 @@
+# ==================================================================
+# LISTA AUTOMÁTICA DE MODS E COLEÇÕES (STEAM WORKSHOP)
+# ==================================================================
+# Cole abaixo (um por linha):
+#   - O ID numérico do Mod (ex: 2824688072)
+#   - O link completo do Mod na Steam (ex: https://steamcommunity.com/sharedfiles/filedetails/?id=2824688072)
+#   - O link ou ID de uma Coleção da Steam (Workshop Collection)
+#
+# NÃO é necessário editar o arquivo enabled.json nem o docker-compose.yml!
+# Ao iniciar, o servidor expande coleções, baixa dependências obrigatórias
+# e ativa todos os mods desta lista automaticamente.
+# ==================================================================
+

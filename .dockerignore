@@ -1,0 +1,10 @@
+.git
+Worlds
+Backups
+Logs
+Mods
+*.md
+*.txt
+*.bat
+*.url
+scripts/*.ps1

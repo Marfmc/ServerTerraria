@@ -1,0 +1,33 @@
+# =========================================================
+# Arquivos gerados em tempo de execução (Ignorados no Git)
+# =========================================================
+
+# 1. Mundos gerados (.wld, .twld, .bak)
+Worlds/*
+!Worlds/.gitkeep
+
+# 2. Backups automáticos do mundo (.zip)
+Backups/*
+!Backups/.gitkeep
+
+# 3. Logs do servidor e histórico compactado (Logs/Old)
+Logs/*
+!Logs/.gitkeep
+
+# 4. Mods baixados (.tmod) e arquivos temporários na pasta Mods
+# (Mantém apenas os arquivos de configuração base para a primeira execução)
+Mods/*
+!Mods/install.txt
+!Mods/enabled.json
+!Mods/.gitkeep
+
+# 5. Arquivos temporários de sistema, IDE e variáveis locais sensíveis
+.vscode/
+.idea/
+.env
+*.tmp
+*.temp
+Thumbs.db
+Desktop.ini
+.DS_Store
+

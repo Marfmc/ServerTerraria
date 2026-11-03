@@ -1,0 +1,65 @@
+services:
+  tmodloader:
+    build: .
+    container_name: servidor_tmodloader
+    ports:
+      - "7777:7777"
+    environment:
+      # =========================================================
+      # Configurações de Geração e Carregamento do Mundo
+      # =========================================================
+      - TMOD_WORLDNAME=MundoPrincipal
+      - TMOD_AUTOCREATE=2               # 1 = Pequeno, 2 = Médio, 3 = Grande
+      - TMOD_WORLDSIZE=2
+      - TMOD_DIFFICULTY=0               # 0 = Clássico, 1 = Perito (Expert), 2 = Mestre (Master), 3 = Jornada
+
+      # =========================================================
+      # Configurações do Servidor
+      # =========================================================
+      - TMOD_MAXPLAYERS=8
+      - TMOD_PASS=suasenha
+      - TMOD_MOTD=Servidor tModLoader Local
+      - TMOD_AUTOSAVE_INTERVAL=10       # Intervalo de salvamento interno do mundo (em minutos)
+
+      # =========================================================
+      # Resiliência, Backups (.zip) e Watchdog
+      # =========================================================
+      - BACKUP_INTERVAL_MINUTES=180     # Cria arquivo .zip na pasta Backups/ a cada 180 min (3 horas)
+      - BACKUP_KEEP_COUNT=10            # Quantidade máxima de backups .zip mantidos na rotação
+      - TMOD_BOOT_TIMEOUT=600           # Tempo máximo (segundos) para carregar mundo/mods antes de reiniciar
+
+      # =========================================================
+      # Rede Radmin VPN e Integração com Discord (Opcional)
+      # =========================================================
+      # RADMIN_IP é preenchido automaticamente pelo IniciarServidor.bat
+      - RADMIN_IP=${RADMIN_IP:-}
+      # Cole abaixo a URL do Webhook do seu canal do Discord para receber avisos de Online/Offline/Erros:
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+    volumes:
+      - ./Worlds:/data/tModLoader/Worlds
+      - ./Mods:/data/tModLoader/Mods
+      - ./Logs:/terraria-server/tModLoader-Logs
+      - ./Backups:/data/Backups
+    healthcheck:
+      test: ["CMD", "/terraria-server/scripts/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    stop_grace_period: 45s
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: gerenciador_portainer
+    ports:
+      - "9443:9443"
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    restart: always
+
+volumes:
+  portainer_data:
