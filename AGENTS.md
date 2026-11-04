@@ -37,7 +37,8 @@ O objetivo deste projeto é ser um servidor de Terraria (tModLoader 1.4) **100% 
   * `diagnose_crash.py`: Analisa `server.log` em caso de falha de inicialização, identifica corrupção de mundo ou qual mod causou exceção e isola automaticamente mods problemáticos após 3 falhas seguidas (Modo Seguro).
   * `discord_notify.py`: Envia Embeds formatados para `DISCORD_WEBHOOK_URL` (Online, Offline, Auto-Restore, Watchdog e Crash de Mod).
   * `healthcheck.sh`: Verifica se o servidor concluiu o boot, se o processo `tModLoader.dll` está ativo e se a porta TCP `7777` está respondendo.
-  * `gerenciador_windows.ps1`: Motor de automação no Windows (chamado pelos arquivos `.bat`), responsável por verificar/instalar Docker Desktop, WSL2 e Radmin VPN, liberar portas `7777` e `9443` no Firewall, detectar o IP `26.x.x.x` do Radmin VPN e fornecer o menu interativo.
+  * `gerenciador_windows.ps1`: Motor de automação no Windows (chamado pelos arquivos `.bat`), responsável por verificar/instalar Docker Desktop, WSL2 e Radmin VPN, liberar portas `7777` e `9443` no Firewall **somente para a faixa do Radmin (`26.0.0.0/8`)**, detectar o IP `26.x.x.x` do Radmin VPN, fornecer o menu interativo e reverter tudo (`-Action Uninstall`, opção `[9]` do menu: remove regras de Firewall, containers, volume e imagens do projeto).
+  * **Contexto de uso:** o PC de desenvolvimento do usuário NÃO é o servidor; o servidor roda em outra máquina. Evite deixar alterações de sistema (firewall, containers) no PC de desenvolvimento.
   * `testar_servidor.ps1`: Bateria de 12 testes automatizados ponta a ponta que valida todas as funções do servidor, exibe resultados em verde/vermelho com logs detalhados e limpa 100% dos arquivos temporários de teste ao finalizar.
 
 ---

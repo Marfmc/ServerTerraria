@@ -2,7 +2,7 @@
 # Gerenciador Completo do Servidor Terraria (tModLoader Docker) para Windows
 # ==============================================================================
 param(
-    [ValidateSet("Start", "Stop", "Menu", "Backup", "Restore", "Logs", "Command", "Test")]
+    [ValidateSet("Start", "Stop", "Menu", "Backup", "Restore", "Logs", "Command", "Test", "Uninstall")]
     [string]$Action = "Menu"
 )
 
@@ -56,16 +56,16 @@ function Ensure-FirewallRules {
 netsh advfirewall firewall delete rule name="Terraria_tModLoader_7777_TCP" >nul 2>&1
 netsh advfirewall firewall delete rule name="Terraria_tModLoader_7777_UDP" >nul 2>&1
 netsh advfirewall firewall delete rule name="Terraria_Portainer_9443_TCP" >nul 2>&1
-netsh advfirewall firewall add rule name="Terraria_tModLoader_7777_TCP" dir=in action=allow protocol=TCP localport=7777 profile=any >nul
-netsh advfirewall firewall add rule name="Terraria_tModLoader_7777_UDP" dir=in action=allow protocol=UDP localport=7777 profile=any >nul
-netsh advfirewall firewall add rule name="Terraria_Portainer_9443_TCP" dir=in action=allow protocol=TCP localport=9443 profile=any >nul
+netsh advfirewall firewall add rule name="Terraria_tModLoader_7777_TCP" dir=in action=allow protocol=TCP localport=7777 remoteip=26.0.0.0/8 profile=any >nul
+netsh advfirewall firewall add rule name="Terraria_tModLoader_7777_UDP" dir=in action=allow protocol=UDP localport=7777 remoteip=26.0.0.0/8 profile=any >nul
+netsh advfirewall firewall add rule name="Terraria_Portainer_9443_TCP" dir=in action=allow protocol=TCP localport=9443 remoteip=26.0.0.0/8 profile=any >nul
 "@
     try {
         $tempBat = Join-Path $env:TEMP "terraria_fw_setup.bat"
         Set-Content -Path $tempBat -Value $fwCmd -Encoding ASCII
         Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$tempBat`"" -Verb RunAs -WindowStyle Hidden -Wait
         Remove-Item $tempBat -Force -ErrorAction SilentlyContinue
-        Write-Host "[OK] Portas 7777 (TCP/UDP) e 9443 (TCP) liberadas no Firewall para a rede Radmin VPN!" -ForegroundColor Green
+        Write-Host "[OK] Portas 7777 (TCP/UDP) e 9443 (TCP) liberadas no Firewall SOMENTE para a faixa do Radmin VPN (26.0.0.0/8)!" -ForegroundColor Green
     } catch {
         Write-Host "[AVISO] Nao foi possivel aplicar as regras de Firewall automaticamente (Permissao recusada)." -ForegroundColor Yellow
     }
@@ -324,6 +324,33 @@ function Invoke-RestoreBackup {
     }
 }
 
+function Uninstall-TerrariaEnvironment {
+    Write-Header "REVERTER CONFIGURACOES FEITAS PELO APP NESTE PC"
+    Write-Host "Isto remove: regras de Firewall, containers, volume do Portainer e imagens deste projeto." -ForegroundColor Yellow
+    Write-Host "Seus mundos, backups, mods e arquivos do projeto NAO sao apagados." -ForegroundColor Gray
+    $confirm = Read-Host "Deseja continuar? (S/N)"
+    if ($confirm -notmatch "^[sS]") { return }
+
+    if ([bool](Get-Command "docker" -ErrorAction SilentlyContinue)) {
+        docker info >$null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            docker-compose down --volumes --rmi local
+            docker rmi jacobsmile/tmodloader1.4:latest portainer/portainer-ce:latest 2>$null
+        }
+    }
+
+    $fwCmd = 'Remove-NetFirewallRule -DisplayName "Terraria_tModLoader_7777_TCP","Terraria_tModLoader_7777_UDP","Terraria_Portainer_9443_TCP" -ErrorAction SilentlyContinue'
+    Start-Process -FilePath powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList "-NoProfile", "-Command", $fwCmd
+    $left = @(Get-NetFirewallRule -DisplayName "Terraria_*" -ErrorAction SilentlyContinue).Count
+    if ($left -eq 0) {
+        Write-Host "[OK] Regras de Firewall removidas." -ForegroundColor Green
+    } else {
+        Write-Host "[AVISO] $left regra(s) de Firewall ainda existem (permissao de administrador recusada?)." -ForegroundColor Yellow
+    }
+    Update-EnvFile $null
+    Write-Host "[OK] Ambiente revertido. Docker Desktop e Radmin VPN nao foram desinstalados." -ForegroundColor Green
+}
+
 function Show-LogsAndDiagnostics {
     Write-Header "LOGS AO VIVO E DIAGNOSTICO DE MODS"
     $diagFile = Join-Path $RootDir "Logs\diagnostico_mods.txt"
@@ -385,6 +412,7 @@ function Show-InteractiveMenu {
         Write-Host "  [6] Enviar Comando para o Console do Terraria (say, save, noon...)" -ForegroundColor Magenta
         Write-Host "  [7] Abrir Painel Web (Portainer - Porta 9443)" -ForegroundColor Blue
         Write-Host "  [8] Executar Bateria de Testes Automatizados (12 Testes)" -ForegroundColor DarkCyan
+        Write-Host "  [9] Reverter configuracoes do app neste PC (Firewall, containers, imagens)" -ForegroundColor DarkYellow
         Write-Host "  [0] Sair" -ForegroundColor Gray
         Write-Host "==================================================================" -ForegroundColor Cyan
 
@@ -398,6 +426,7 @@ function Show-InteractiveMenu {
             "6" { Send-TerrariaCommand; Pause }
             "7" { Start-Process "https://localhost:9443" }
             "8" { & (Join-Path $PSScriptRoot "testar_servidor.ps1"); Pause }
+            "9" { Uninstall-TerrariaEnvironment; Pause }
             "0" { return }
             default { }
         }
@@ -412,5 +441,6 @@ switch ($Action) {
     "Logs"    { Show-LogsAndDiagnostics }
     "Command" { Send-TerrariaCommand }
     "Test"    { & (Join-Path $PSScriptRoot "testar_servidor.ps1") }
+    "Uninstall" { Uninstall-TerrariaEnvironment }
     "Menu"    { Show-InteractiveMenu }
 }
