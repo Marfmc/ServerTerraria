@@ -72,7 +72,8 @@ ServerTerraria_espelho/
     ├── backup_manager.sh              # Criação de .zip, rotação de 10 cópias e Auto-Restore
     ├── diagnose_crash.py              # Analisador de logs e isolamento de mods defeituosos (Modo Seguro)
     ├── discord_notify.py              # Envio de avisos formatados (Embeds) para o Discord
-    └── healthcheck.sh                 # Verificação silenciosa de saúde do processo e da porta 7777
+    ├── healthcheck.sh                 # Verificação silenciosa de saúde do processo e da porta 7777
+    └── testar_servidor.ps1            # Bateria de 12 testes automatizados ponta a ponta (com auto-limpeza)
 
 
 3. COMO INICIAR E DESLIGAR O SERVIDOR (USO DIÁRIO)
@@ -100,6 +101,7 @@ C) Usando o Painel de Controle Interativo ("PainelMenu.bat"):
    - [5] Ver Logs ao Vivo e Diagnóstico de Mods
    - [6] Enviar Comandos para o Console do Terraria (ex: "say Olá", "noon", "save")
    - [7] Abrir o Painel Web (Portainer)
+   - [8] Executar Bateria de Testes Automatizados (12 Testes com auto-limpeza)
 
 
 4. COMO CONECTAR AO SERVIDOR (LOCAL E À DISTÂNCIA)

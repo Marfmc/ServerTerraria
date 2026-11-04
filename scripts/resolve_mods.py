@@ -79,7 +79,7 @@ def read_initial_ids() -> list[str]:
             log(f"Aviso ao criar cabeçalho no install.txt: {e}")
 
     if os.path.exists(INSTALL_TXT_PATH):
-        with open(INSTALL_TXT_PATH, "r", encoding="utf-8", errors="ignore") as f:
+        with open(INSTALL_TXT_PATH, "r", encoding="utf-8-sig", errors="ignore") as f:
             for line in f:
                 for mod_id in extract_ids_from_line(line):
                     if mod_id not in ids:

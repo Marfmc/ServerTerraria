@@ -2,7 +2,7 @@
 # Gerenciador Completo do Servidor Terraria (tModLoader Docker) para Windows
 # ==============================================================================
 param(
-    [ValidateSet("Start", "Stop", "Menu", "Backup", "Restore", "Logs", "Command")]
+    [ValidateSet("Start", "Stop", "Menu", "Backup", "Restore", "Logs", "Command", "Test")]
     [string]$Action = "Menu"
 )
 
@@ -384,6 +384,7 @@ function Show-InteractiveMenu {
         Write-Host "  [5] Ver Logs ao Vivo / Diagnostico de Mods" -ForegroundColor White
         Write-Host "  [6] Enviar Comando para o Console do Terraria (say, save, noon...)" -ForegroundColor Magenta
         Write-Host "  [7] Abrir Painel Web (Portainer - Porta 9443)" -ForegroundColor Blue
+        Write-Host "  [8] Executar Bateria de Testes Automatizados (12 Testes)" -ForegroundColor DarkCyan
         Write-Host "  [0] Sair" -ForegroundColor Gray
         Write-Host "==================================================================" -ForegroundColor Cyan
 
@@ -396,6 +397,7 @@ function Show-InteractiveMenu {
             "5" { Show-LogsAndDiagnostics; Pause }
             "6" { Send-TerrariaCommand; Pause }
             "7" { Start-Process "https://localhost:9443" }
+            "8" { & (Join-Path $PSScriptRoot "testar_servidor.ps1"); Pause }
             "0" { return }
             default { }
         }
@@ -409,5 +411,6 @@ switch ($Action) {
     "Restore" { Invoke-RestoreBackup }
     "Logs"    { Show-LogsAndDiagnostics }
     "Command" { Send-TerrariaCommand }
+    "Test"    { & (Join-Path $PSScriptRoot "testar_servidor.ps1") }
     "Menu"    { Show-InteractiveMenu }
 }

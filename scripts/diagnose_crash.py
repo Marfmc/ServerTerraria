@@ -12,7 +12,7 @@ import os
 import re
 import sys
 
-SERVER_LOG = "/terraria-server/tModLoader-Logs/server.log"
+SERVER_LOG = os.environ.get("TMOD_SERVER_LOG_PATH", "/terraria-server/tModLoader-Logs/server.log")
 DIAG_FILE = "/terraria-server/tModLoader-Logs/diagnostico_mods.txt"
 ENABLED_JSON = "/data/tModLoader/Mods/enabled.json"
 DISABLED_FAULTY_FILE = "/data/tModLoader/.disabled_faulty_mods.txt"
@@ -46,11 +46,11 @@ def analyze_log() -> tuple[str, str, str]:
         if re.search(pat, content, re.IGNORECASE):
             return "WORLD_CORRUPT", "", "Falha ao carregar o arquivo do mundo (.wld/.twld corrompido)."
 
-    # Carrega lista de mods ativos em enabled.json para cruzar com o stack trace
+    # Carrega lista de mods ativos em enabled.json para cruzar com o stack trace (suporta UTF-8 com ou sem BOM do Windows)
     enabled_mods = []
     if os.path.exists(ENABLED_JSON):
         try:
-            with open(ENABLED_JSON, "r", encoding="utf-8") as f:
+            with open(ENABLED_JSON, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
                 if isinstance(data, list):
                     enabled_mods = [str(x) for x in data]
@@ -84,6 +84,14 @@ def analyze_log() -> tuple[str, str, str]:
                     suspect_mod = mod
                     break
             if suspect_mod:
+                break
+
+    # Fallback caso enabled.json esteja vazio: extrai da linha 'Loading <ModName>' antes do erro
+    if not suspect_mod:
+        for line in reversed(lines):
+            m = re.search(r"\[tML\]:\s+(?:Loading|Instantiating)\s+([A-Za-z0-9_]+)", line)
+            if m and m.group(1) not in ("ModLoader", "Terraria"):
+                suspect_mod = m.group(1)
                 break
 
     if suspect_mod:
