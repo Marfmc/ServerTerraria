@@ -17,7 +17,8 @@ services:
       # Configurações do Servidor
       # =========================================================
       - TMOD_MAXPLAYERS=8
-      - TMOD_PASS=suasenha
+      # Defina a senha real no arquivo .env (TMOD_PASS=...).
+      - TMOD_PASS=${TMOD_PASS:-suasenha}
       - TMOD_MOTD=Servidor tModLoader Local
       - TMOD_AUTOSAVE_INTERVAL=10       # Intervalo de salvamento interno do mundo (em minutos)
 
@@ -80,7 +81,6 @@ services:
       - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN
-      - SYS_MODULE
     restart: unless-stopped
 
 volumes:
