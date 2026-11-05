@@ -85,20 +85,25 @@ if (Test-Path $TwldFile) { Copy-Item $TwldFile (Join-Path $TempBackupDir "MundoP
 
 try {
     # ------------------------------------------------------------------
-    # TESTE 01: Ambiente Windows (Docker Engine & Radmin VPN)
+    # TESTE 01: Ambiente Windows & Provedores VPN (Radmin Host / Tailscale Container)
     # ------------------------------------------------------------------
-    Run-Test -Number 1 -Name "Ambiente Windows (Motor Docker & Radmin VPN)" -TestBlock {
+    Run-Test -Number 1 -Name "Ambiente Docker & Provedores VPN (Radmin / Container Tailscale)" -TestBlock {
         $dockerOut = docker info 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "Docker Engine nao esta respondendo. Saida: $($dockerOut | Out-String)"
+        }
+        $composeFile = Join-Path $RootDir "docker-compose.yml"
+        $composeContent = Get-Content $composeFile -Raw
+        if ($composeContent -notmatch "vpn_tailscale" -or $composeContent -notmatch "tailscale/tailscale") {
+            throw "Servico 'vpn_tailscale' nao encontrado no docker-compose.yml."
         }
         $radminPaths = @(
             "${env:ProgramFiles(x86)}\Radmin VPN\RvGui.exe",
             "${env:ProgramFiles}\Radmin VPN\RvGui.exe"
         )
         $radminExe = $radminPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-        $radminStatus = if ($radminExe) { "Radmin instalado" } else { "Radmin ausente (instalavel via .bat)" }
-        return "Docker Engine ativo ($radminStatus)"
+        $radminStatus = if ($radminExe) { "Radmin instalado" } else { "Radmin instalavel sob demanda" }
+        return "Docker Engine ativo ($radminStatus | Tailscale configurado em Container Docker)"
     }
 
     # ------------------------------------------------------------------

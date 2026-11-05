@@ -194,7 +194,14 @@ while [ "$SHUTTING_DOWN" -eq 0 ]; do
             echo "=================================================================="
             echo "[SYSTEM] 🟢 SERVIDOR ONLINE E PRONTO NA PORTA ${TMOD_PORT}!"
             if [ -n "${RADMIN_IP:-}" ]; then
-                echo "[SYSTEM] 🌐 IP Radmin VPN: ${RADMIN_IP}:${TMOD_PORT}"
+                echo "[SYSTEM] 🌐 IP Radmin VPN   : ${RADMIN_IP}:${TMOD_PORT}"
+            fi
+            LIVE_TS_IP="${TAILSCALE_IP:-}"
+            if [ -z "$LIVE_TS_IP" ]; then
+                LIVE_TS_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' | head -n 1)
+            fi
+            if [ -n "$LIVE_TS_IP" ]; then
+                echo "[SYSTEM] 🌐 IP Tailscale VPN: ${LIVE_TS_IP}:${TMOD_PORT}"
             fi
             echo "=================================================================="
             python3 /terraria-server/scripts/discord_notify.py online &

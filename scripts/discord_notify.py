@@ -8,10 +8,26 @@ Se DISCORD_WEBHOOK_URL estiver configurado no ambiente, envia Embeds formatados.
 import datetime
 import json
 import os
+import re
+import subprocess
 import sys
 import urllib.request
 
 SUMMARY_FILE = "/tmp/active_mods_summary.txt"
+
+
+def detect_tailscale_ip() -> str:
+    env_ip = os.environ.get("TAILSCALE_IP", "").strip()
+    if env_ip:
+        return env_ip
+    try:
+        out = subprocess.check_output(["hostname", "-I"], text=True, timeout=3)
+        for token in out.split():
+            if re.match(r"^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$", token.strip()):
+                return token.strip()
+    except Exception:
+        pass
+    return ""
 
 
 def read_mods_summary() -> str:
@@ -57,9 +73,35 @@ def main() -> int:
     port = os.environ.get("TMOD_PORT", "7777")
     password = os.environ.get("TMOD_PASS", "N/A")
     max_players = os.environ.get("TMOD_MAXPLAYERS", "8")
-    radmin_ip = os.environ.get("RADMIN_IP", "").strip() or "Verifique no Radmin VPN"
+    provider = os.environ.get("NETWORK_PROVIDER", "radmin").strip().lower()
+    radmin_ip = os.environ.get("RADMIN_IP", "").strip()
+    tailscale_ip = detect_tailscale_ip()
 
-    connect_address = f"`{radmin_ip}:{port}`" if radmin_ip != "Verifique no Radmin VPN" else f"Porta `{port}` (IP da Rede Radmin VPN)"
+    address_lines = []
+    if radmin_ip:
+        address_lines.append(f"**Radmin:** `{radmin_ip}:{port}`")
+    if tailscale_ip:
+        address_lines.append(f"**Tailscale:** `{tailscale_ip}:{port}`")
+
+    if address_lines:
+        connect_address = "\n".join(address_lines)
+        if radmin_ip and tailscale_ip:
+            network_label = "🌐 Endereços (Híbrido)"
+        elif tailscale_ip:
+            network_label = "🌐 Endereço (Tailscale VPN)"
+        else:
+            network_label = "🌐 Endereço (Radmin VPN)"
+    else:
+        if provider == "tailscale":
+            network_label = "🌐 Endereço (Tailscale VPN)"
+            connect_address = f"Porta `{port}` (Verifique IP `100.x.y.z` no Tailscale)"
+        elif provider == "local":
+            network_label = "🌐 Endereço (Rede Local / Direto)"
+            connect_address = f"Porta `{port}` (LAN / Port Forwarding)"
+        else:
+            network_label = "🌐 Endereço (Radmin VPN)"
+            connect_address = f"Porta `{port}` (Verifique IP `26.x.y.z` no Radmin VPN)"
+
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     if event == "online":
@@ -69,7 +111,7 @@ def main() -> int:
             "description": "O mundo foi carregado e o servidor já está aceitando conexões.",
             "color": 0x2ECC71,
             "fields": [
-                {"name": "🌐 Endereço (Radmin VPN)", "value": connect_address, "inline": True},
+                {"name": network_label, "value": connect_address, "inline": True},
                 {"name": "🔑 Senha", "value": f"`{password}`" if password != "N/A" else "Sem senha", "inline": True},
                 {"name": "🗺️ Mundo", "value": f"`{world_name}` (Máx: {max_players})", "inline": True},
                 {"name": "🧩 Mods Ativos", "value": mods_text, "inline": False},

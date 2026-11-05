@@ -6,10 +6,10 @@
 
 ## 1. Visão e Requisitos Principais do Usuário
 O objetivo deste projeto é ser um servidor de Terraria (tModLoader 1.4) **100% portátil, resiliente e "1-clique"**:
-1. **Automação Total (One-Click):** Tudo deve funcionar com o clicar de um botão (`.bat`), incluindo verificação/instalação de dependências de ambiente (Docker Desktop, WSL2 e Radmin VPN) quando necessário.
+1. **Automação Total (One-Click):** Tudo deve funcionar com o clicar de um botão (`.bat`), incluindo seleção do modo de rede e verificação/instalação de dependências de ambiente (Docker Desktop, WSL2 e Radmin VPN) quando necessário.
 2. **Gerenciamento Fácil de Mods:** Adicionar, atualizar e ativar mods deve exigir apenas colar IDs, links de mods ou links de Coleções da Steam no `Mods/install.txt`.
 3. **Alta Resiliência (Anti-Crash & Anti-Freeze):** Proteção contra quedas, travamentos silenciosos e loops de carregamento infinito na inicialização ou durante o jogo, garantindo salvamento seguro do mundo.
-4. **Acesso Remoto Simples:** Conexão via **Radmin VPN** (com liberação automática das portas `7777` para o jogo e `9443` para administração remota no Portainer no Firewall do Windows).
+4. **Acesso Remoto Multi-Provedor com Tailscale Containerizado (`radmin` | `tailscale` | `hybrid` | `local`):** Conexão via **Radmin VPN** no host (`26.0.0.0/8`), **Tailscale VPN 100% em Container Docker** (`vpn_tailscale` compartilhando a stack de rede do servidor via `network_mode: "service:tmodloader"` na faixa `100.64.0.0/10`, sem instalar nada no Windows), **Modo Híbrido** (ambos simultaneamente + contingência automática se o Radmin falhar) ou **Apenas Local**.
 
 ---
 
@@ -35,9 +35,14 @@ O objetivo deste projeto é ser um servidor de Terraria (tModLoader 1.4) **100% 
   * `resolve_mods.py`: Lê `Mods/install.txt`, consulta a API da Steam Workshop para expandir Coleções e dependências obrigatórias, baixa via `steamcmd` (com retry individual) e preenche `Mods/enabled.json`.
   * `backup_manager.sh`: Cria backups `.zip`, gerencia a rotação mantendo os últimos 10 arquivos e realiza o Auto-Restore caso detecte `.wld`/`.twld` ausente ou corrompido.
   * `diagnose_crash.py`: Analisa `server.log` em caso de falha de inicialização, identifica corrupção de mundo ou qual mod causou exceção e isola automaticamente mods problemáticos após 3 falhas seguidas (Modo Seguro).
-  * `discord_notify.py`: Envia Embeds formatados para `DISCORD_WEBHOOK_URL` (Online, Offline, Auto-Restore, Watchdog e Crash de Mod).
+  * `discord_notify.py`: Envia Embeds formatados para `DISCORD_WEBHOOK_URL` (Online com IPs do Radmin e/ou Tailscale conforme o provedor ativo, Offline, Auto-Restore, Watchdog e Crash de Mod).
   * `healthcheck.sh`: Verifica se o servidor concluiu o boot, se o processo `tModLoader.dll` está ativo e se a porta TCP `7777` está respondendo.
-  * `gerenciador_windows.ps1`: Motor de automação no Windows (chamado pelos arquivos `.bat`), responsável por verificar/instalar Docker Desktop, WSL2 e Radmin VPN, liberar portas `7777` e `9443` no Firewall **somente para a faixa do Radmin (`26.0.0.0/8`)**, detectar o IP `26.x.x.x` do Radmin VPN, fornecer o menu interativo e reverter tudo (`-Action Uninstall`, opção `[9]` do menu: remove regras de Firewall, containers, volume e imagens do projeto).
+  * `gerenciador_windows.ps1`: Motor de automação no Windows (chamado pelos arquivos `.bat`), responsável por:
+    * **Seletor e Persistência de Provedor de Rede (`Select-NetworkProvider`):** Permite escolher entre `radmin` (app Windows), `tailscale` (container Docker `vpn_tailscale` no `docker-compose.yml`), `hybrid` (Radmin + Container Tailscale simultâneos) ou `local` antes da verificação de dependências. Salva a escolha em `NETWORK_PROVIDER` no `.env` e exibe um countdown não-bloqueante de 4s nas inicializações seguintes.
+    * **Container Sidecar Tailscale (`vpn_tailscale` + `Ensure-TailscaleContainer`):** O serviço `tailscale` (`tailscale/tailscale:latest`) roda dentro do Docker usando `network_mode: "service:tmodloader"` e volume persistente `tailscale_data`. Não instala nada no Windows nem exige abrir Firewall para o Tailscale. Suporta autenticação Headless (`TS_AUTHKEY` no `.env`) ou abre automaticamente o link único de login no navegador na primeira execução.
+    * **Camada Extra de Fallback Automático (`Ensure-NetworkEnvironment`):** Se o Radmin VPN falhar ou não retornar IP (`26.x.x.x`), oferece ativar imediatamente o container Tailscale no Docker Compose como contingência (`hybrid`).
+    * **Firewall Zero-Trust (`Ensure-FirewallRules`):** Libera as portas `7777` (TCP/UDP) e `9443` (TCP) restritas às faixas `26.0.0.0/8` e `LocalSubnet` quando necessário.
+    * Verificar/instalar Docker Desktop, WSL2 e Radmin VPN (`Famatech.RadminVPN`) via Winget, fornecer o menu interativo (com opção `[10]` para trocar provedor de rede) e reverter tudo (`-Action Uninstall`, opção `[9]` do menu: remove regras de Firewall, containers `servidor_tmodloader`, `gerenciador_portainer`, `vpn_tailscale`, volumes e imagens do projeto).
   * **Contexto de uso:** o PC de desenvolvimento do usuário NÃO é o servidor; o servidor roda em outra máquina. Evite deixar alterações de sistema (firewall, containers) no PC de desenvolvimento.
   * `testar_servidor.ps1`: Bateria de 12 testes automatizados ponta a ponta que valida todas as funções do servidor, exibe resultados em verde/vermelho com logs detalhados e limpa 100% dos arquivos temporários de teste ao finalizar.
 

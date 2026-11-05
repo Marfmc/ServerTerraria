@@ -12,8 +12,15 @@ Ele foi projetado para eliminar configurações manuais complexas e proteger o
 progresso do mundo contra falhas, oferecendo:
 
   * Automação 1-Clique (Bootstrapper): Verifica e instala automaticamente as
-    dependências de ambiente no Windows (Docker Desktop, WSL2 e Radmin VPN) e
-    libera as portas necessárias no Firewall do Windows sem esforço manual.
+    dependências de ambiente no Windows (Docker Desktop, WSL2 e Radmin VPN se
+    escolhido) e libera as portas necessárias no Firewall do Windows sozinho.
+  * Múltiplos Modos de Rede com Tailscale no Docker + Fallback Automático:
+    Antes de iniciar, você pode escolher como seus amigos vão se conectar:
+    1) Radmin VPN (salas clássicas com nome e senha, IP 26.x.x.x);
+    2) Tailscale em Container Docker (100% dentro do Docker Compose, sem precisar
+       instalar VPN no Windows do servidor, IP 100.x.x.x);
+    3) Modo Híbrido (Radmin + Tailscale juntos como camada extra contra erros);
+    4) Apenas Rede Local (para jogar só em casa ou com porta aberta no roteador).
   * Gerenciamento Inteligente de Mods: Basta colar IDs, links de mods ou links
     de Coleções da Steam no arquivo "Mods/install.txt". O servidor expande
     coleções, descobre dependências obrigatórias, baixa tudo via SteamCMD e
@@ -26,12 +33,9 @@ progresso do mundo contra falhas, oferecendo:
     arquivos .zip na pasta "Backups/" ao iniciar, ao desligar e a cada 180
     minutos, mantendo os últimos 10 backups e restaurando automaticamente o
     mais recente caso detecte corrupção nos arquivos do mundo.
-  * Acesso à Distância (Radmin VPN + Portainer): Detecta automaticamente o IP da
-    sua rede Radmin VPN (26.x.x.x) para seus amigos jogarem na porta 7777 e
-    permite administração remota via navegador na porta 9443.
   * Avisos no Discord (Webhook): Envia notificações automáticas quando o
-    servidor fica Online (com IP, senha e lista de mods), quando desliga ou se
-    ocorrer algum alerta de backup/mod.
+    servidor fica Online (com IP do Radmin e/ou Tailscale, senha e lista de
+    mods), quando desliga ou se ocorrer algum alerta de backup/mod.
 
 
 2. MAPA DE PASTAS E ARQUIVOS
@@ -80,10 +84,14 @@ ServerTerraria_espelho/
 --------------------------------------------------------------------------------
 A) Para LIGAR o servidor:
    1. Dê dois cliques em "IniciarServidor.bat".
-   2. O script verificará se o Docker Desktop e o Radmin VPN estão instalados e
-      abertos (instalando-os se necessário) e liberará as portas 7777 e 9443 no
-      Firewall do Windows.
-   3. Acompanhe o carregamento na tela até aparecer a mensagem verde:
+   2. Na primeira vez, escolha qual modo de rede deseja usar ([1] Radmin VPN,
+      [2] Tailscale Container, [3] Híbrido ou [4] Local). Sua escolha fica salva
+      para que nas próximas vezes o servidor inicie sozinho sem precisar digitar
+      nada (se quiser trocar depois, basta apertar a tecla "C" nos primeiros 4
+      segundos ou usar a opção [10] do PainelMenu.bat).
+   3. O script verificará as dependências (e, se o Radmin falhar, oferecerá
+      ativar o container do Tailscale automaticamente como camada extra).
+   4. Acompanhe o carregamento na tela até aparecer a mensagem verde:
       "[ONLINE] SERVIDOR TERRARIA PRONTO PARA JOGAR!"
 
 B) Para DESLIGAR o servidor:
@@ -102,19 +110,38 @@ C) Usando o Painel de Controle Interativo ("PainelMenu.bat"):
    - [6] Enviar Comandos para o Console do Terraria (ex: "say Olá", "noon", "save")
    - [7] Abrir o Painel Web (Portainer)
    - [8] Executar Bateria de Testes Automatizados (12 Testes com auto-limpeza)
+   - [9] Reverter configurações feitas neste PC (remove Firewall, containers e imagens)
+   - [10] Alterar Provedor de Rede / VPN (Radmin / Tailscale / Híbrido / Local)
 
 
-4. COMO CONECTAR AO SERVIDOR (LOCAL E À DISTÂNCIA)
+4. COMO CONECTAR AO SERVIDOR (PASSO A PASSO PARA INICIANTES)
 --------------------------------------------------------------------------------
 * Para você (jogando no mesmo PC do servidor):
   Abra o tModLoader -> Multiplayer -> Join via IP -> Digite: 127.0.0.1 (Porta: 7777)
 
-* Para seus amigos (à distância via Radmin VPN):
-  1. Crie uma rede no aplicativo Radmin VPN (ou entre na mesma rede que seus amigos).
-  2. Ao iniciar o "IniciarServidor.bat", o painel mostrará o seu IP do Radmin
-     (exemplo: 26.45.120.15:7777).
-  3. Seus amigos só precisam estar conectados na mesma rede do Radmin VPN e
-     digitar esse IP (26.x.x.x) e a porta 7777 no tModLoader.
+* OPÇÃO 1: Para seus amigos via RADMIN VPN (Modo Salas - IP 26.x.x.x):
+  1. Crie uma sala no aplicativo Radmin VPN (com Nome e Senha) e passe para seus
+     amigos entrarem.
+  2. Ao abrir o "IniciarServidor.bat", o painel mostrará o seu IP do Radmin
+     (exemplo: 26.45.120.15:7777) e enviará esse IP no Discord.
+  3. Seus amigos entram na sala do Radmin e digitam esse IP e a porta 7777 no jogo.
+
+* OPÇÃO 2: Para seus amigos via TAILSCALE CONTAINER (Modo DevOps - IP 100.x.x.x):
+  O Tailscale deste projeto roda 100% dentro do Docker! Você NÃO precisa instalar
+  o programa do Tailscale no Windows do servidor:
+  1. Escolha a opção [2] (Tailscale) ou [3] (Híbrido) ao iniciar.
+  2. Na primeira vez que o container "vpn_tailscale" subir, ele abrirá uma página
+     no seu navegador para você fazer login no Tailscale e autorizar o servidor
+     (esse login fica salvo para sempre no Docker).
+     -> Dica Avançada (Opcional): Se quiser que o servidor conecte sem abrir o
+        navegador, gere uma Auth Key no site do Tailscale (Settings -> Keys) e
+        cole no arquivo ".env" na linha: TS_AUTHKEY=tskey-auth-xxxxx
+  3. No painel web do Tailscale (https://login.tailscale.com/admin/machines),
+     clique nos três pontinhos ao lado da máquina "terraria-tmodloader" ->
+     "Share..." e mande o link de convite para seus amigos (eles só precisam ter
+     o Tailscale instalado no PC deles e aceitar o convite).
+  4. O painel do servidor (e o aviso no Discord) mostrará o IP do Tailscale
+     (exemplo: 100.101.50.25:7777). Seus amigos digitam esse IP no tModLoader!
 
 * Administração Remota (Portainer):
   Você pode gerenciar os containers pelo navegador acessando:

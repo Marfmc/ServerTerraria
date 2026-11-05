@@ -29,10 +29,12 @@ services:
       - TMOD_BOOT_TIMEOUT=600           # Tempo máximo (segundos) para carregar mundo/mods antes de reiniciar
 
       # =========================================================
-      # Rede Radmin VPN e Integração com Discord (Opcional)
+      # Rede VPN (Radmin / Tailscale) e Integração com Discord
       # =========================================================
-      # RADMIN_IP é preenchido automaticamente pelo IniciarServidor.bat
+      # Preenchidos automaticamente pelo gerenciador_windows.ps1:
+      - NETWORK_PROVIDER=${NETWORK_PROVIDER:-radmin}
       - RADMIN_IP=${RADMIN_IP:-}
+      - TAILSCALE_IP=${TAILSCALE_IP:-}
       # Cole abaixo a URL do Webhook do seu canal do Discord para receber avisos de Online/Offline/Erros:
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
     volumes:
@@ -61,5 +63,26 @@ services:
       - portainer_data:/data
     restart: always
 
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: vpn_tailscale
+    network_mode: "service:tmodloader"
+    depends_on:
+      - tmodloader
+    environment:
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_ACCEPT_DNS=false
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_EXTRA_ARGS=--hostname=${TS_HOSTNAME:-terraria-tmodloader}
+    volumes:
+      - tailscale_data:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    restart: unless-stopped
+
 volumes:
   portainer_data:
+  tailscale_data:
