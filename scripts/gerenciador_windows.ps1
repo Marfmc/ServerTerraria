@@ -46,7 +46,9 @@ function Update-EnvFile($Provider, $RadminIP, $TailscaleIP) {
     $lines += "NETWORK_PROVIDER=$provVal"
     $lines += "RADMIN_IP=$(if ($RadminIP) { $RadminIP } else { '' })"
     $lines += "TAILSCALE_IP=$(if ($TailscaleIP) { $TailscaleIP } else { '' })"
-    Set-Content -Path $envPath -Value $lines -Encoding UTF8
+    # UTF-8 SEM BOM (o Set-Content -Encoding UTF8 do PowerShell 5.1 grava BOM, que pode
+    # fazer o docker-compose ignorar a variavel da primeira linha do .env).
+    [System.IO.File]::WriteAllLines($envPath, [string[]]$lines)
 }
 
 function Get-RadminIP {
@@ -80,9 +82,22 @@ function Get-TailscaleIP {
                 }
             }
         }
-        return (Get-EnvValue "TAILSCALE_IP" $null)
+        # Sem fallback para o valor salvo no .env: um IP antigo nao prova que o container
+        # esta autenticado. Se nao ha IP ativo, o Tailscale nao esta conectado.
+        return $null
     } catch {
         return $null
+    }
+}
+
+function Restart-TailscaleSidecar {
+    # O container vpn_tailscale usa a rede do servidor_tmodloader (network_mode: service:...).
+    # Quando o servidor e reiniciado/restaurado, o sidecar fica preso a rede antiga e perde a
+    # conexao. Reiniciar o sidecar (somente se ele ja estiver rodando) o reanexa a rede nova.
+    $running = docker ps -q -f name=vpn_tailscale 2>$null
+    if ($running) {
+        Write-Host "[TAILSCALE] Reiniciando o container Tailscale para reanexar a rede do servidor..." -ForegroundColor Cyan
+        docker restart vpn_tailscale >$null 2>&1
     }
 }
 
@@ -364,6 +379,7 @@ function Start-TerrariaServer {
     }
 
     if ($activeProvider -eq "tailscale" -or $activeProvider -eq "hybrid") {
+        Restart-TailscaleSidecar
         $tsIp = Ensure-TailscaleContainer
         Update-EnvFile $activeProvider (Get-RadminIP) $tsIp
     }
@@ -417,7 +433,6 @@ function Start-TerrariaServer {
         }
         if ($tsIP) {
             Write-Host " -> IP para Amigos (Tailscale VPN): ${tsIP}:7777" -ForegroundColor Cyan
-            Write-Host " -> Painel Portainer (Tailscale)  : https://${tsIP}:9443" -ForegroundColor Gray
         }
         if (-not $radminIP -and -not $tsIP -and $activeProvider -ne "local") {
             Write-Host " -> IP para Amigos (VPN)          : (Conecte sua VPN Radmin/Tailscale e copie o IP):7777" -ForegroundColor Yellow
@@ -520,6 +535,7 @@ function Invoke-RestoreBackup {
     if ($running) {
         Write-Host "Reiniciando o servidor com o backup restaurado..." -ForegroundColor Cyan
         docker start servidor_tmodloader >$null 2>&1
+        Restart-TailscaleSidecar
         Write-Host "[OK] Servidor reiniciado!" -ForegroundColor Green
     }
 }
