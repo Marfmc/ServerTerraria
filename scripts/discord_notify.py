@@ -51,8 +51,24 @@ def read_mods_summary() -> str:
     return "Nenhum (Vanilla)"
 
 
+def read_progression_summary() -> str:
+    try:
+        out = subprocess.check_output(
+            ["python3", "/terraria-server/scripts/nameless_deity.py", "summary-line"],
+            text=True,
+            timeout=5,
+        ).strip()
+        if out:
+            return out
+    except Exception:
+        pass
+    return "Use `/progresso` no Discord ou `!progresso` no chat do jogo."
+
+
 def send_webhook(url: str, payload: dict) -> None:
     try:
+        if "username" not in payload:
+            payload["username"] = "Nameless Deity"
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -115,6 +131,7 @@ def main() -> int:
 
     if event == "online":
         mods_text = read_mods_summary()
+        prog_text = read_progression_summary()
         embed = {
             "title": "🟢 Servidor Terraria (tModLoader) Online!",
             "description": "O mundo foi carregado e o servidor já está aceitando conexões.",
@@ -124,19 +141,21 @@ def main() -> int:
                 {"name": "🔑 Senha", "value": f"`{password}`" if password != "N/A" else "Sem senha", "inline": True},
                 {"name": "🗺️ Mundo", "value": f"`{world_name}` (Máx: {max_players})", "inline": True},
                 {"name": "🧩 Mods Ativos", "value": mods_text, "inline": False},
+                {"name": "👁️ Guardião da Progressão (Nameless Deity)", "value": f"{prog_text}\n*(Comandos: `/progresso`, `/proximo`, `/bosses`, `/objetivos` ou com `!` no chat do jogo)*", "inline": False},
             ],
-            "footer": {"text": "Servidor Dedicado tModLoader •"},
+            "footer": {"text": "Nameless Deity • Servidor Dedicado tModLoader"},
             "timestamp": now_iso,
         }
     elif event == "offline":
+        prog_text = read_progression_summary()
         embed = {
             "title": "🔴 Servidor Terraria Desligado",
             "description": (
                 f"O mundo **`{world_name}`** foi salvo com segurança e um backup `.zip` atualizado "
-                f"foi guardado na pasta `Backups/`.\n{extra_msg}"
+                f"foi guardado na pasta `Backups/`.\n\n{prog_text}\n{extra_msg}"
             ).strip(),
             "color": 0xE74C3C,
-            "footer": {"text": "Servidor Dedicado tModLoader"},
+            "footer": {"text": "Nameless Deity • Servidor Dedicado tModLoader"},
             "timestamp": now_iso,
         }
     elif event == "restore":

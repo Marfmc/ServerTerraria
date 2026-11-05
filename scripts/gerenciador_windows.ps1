@@ -2,7 +2,7 @@
 # Gerenciador Completo do Servidor Terraria (tModLoader Docker) para Windows
 # ==============================================================================
 param(
-    [ValidateSet("Start", "Stop", "Menu", "Backup", "Restore", "Logs", "Command", "Test", "Uninstall", "Network", "Update")]
+    [ValidateSet("Start", "Stop", "Menu", "Backup", "Restore", "Logs", "Command", "Test", "Uninstall", "Network", "Update", "Progression")]
     [string]$Action = "Menu"
 )
 
@@ -488,7 +488,7 @@ function Invoke-ManualBackup {
         $ts = (Get-Date).ToString("yyyy-MM-dd_HH-mm-ss")
         $worldBase = $wldFiles[0].BaseName
         $zipPath = Join-Path $backupsDir "backup_${worldBase}_${ts}_manual.zip"
-        $toCompress = Get-ChildItem -Path $worldsDir -Include "${worldBase}.wld", "${worldBase}.twld" -File
+        $toCompress = Get-ChildItem -Path $worldsDir -Include "${worldBase}.wld", "${worldBase}.twld", "${worldBase}_progression.json" -File
         Compress-Archive -Path $toCompress.FullName -DestinationPath $zipPath -Force
         Write-Host "[OK] Backup criado: $(Split-Path $zipPath -Leaf)" -ForegroundColor Green
     }
@@ -659,6 +659,83 @@ function Update-TerrariaServer {
     }
 }
 
+function Manage-NamelessDeityProgression {
+    Write-Header "GUARDIAO NAMELESS DEITY (PROGRESSAO LINEAR & BOT DISCORD)"
+    $running = [bool](docker ps -q -f name=servidor_tmodloader 2>$null)
+    $botToken = Get-EnvValue "DISCORD_BOT_TOKEN" ""
+    $tokenStatus = if ($botToken) { "Configurado (Ativo)" } else { "Nao configurado (Usando Webhook + Chat do Jogo)" }
+
+    Write-Host "  Bot Discord 'Nameless Deity' : $tokenStatus" -ForegroundColor Cyan
+    Write-Host "  Comandos no Chat do Jogo     : !progresso | !proximo | !bosses | !objetivos | !marcar <nome> | !meta <texto>" -ForegroundColor Gray
+    Write-Host "  Comandos no Discord          : /progresso | /proximo | /bosses | /objetivos | /marcar <nome> | /meta <texto>" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [1] Ver Proximo Boss (Invocacao e Bioma) e enviar ao Discord" -ForegroundColor Green
+    Write-Host "  [2] Ver Lista Completa de Bosses (Vanilla + Calamity) e enviar ao Discord" -ForegroundColor Cyan
+    Write-Host "  [3] Ver Marcos da Campanha e Metas do Grupo" -ForegroundColor Yellow
+    Write-Host "  [4] Marcar um Boss ou Objetivo como Concluido" -ForegroundColor White
+    Write-Host "  [5] Desmarcar um Boss ou Objetivo (Voltar para Pendente)" -ForegroundColor Gray
+    Write-Host "  [6] Adicionar Nova Meta Customizada para o Grupo" -ForegroundColor Magenta
+    Write-Host "  [7] Configurar Token do Bot Discord (DISCORD_BOT_TOKEN no .env)" -ForegroundColor Blue
+    Write-Host "  [0] Voltar" -ForegroundColor Gray
+    Write-Host ""
+
+    $sub = Read-Host "Escolha uma opcao"
+    if ($sub -eq "0" -or [string]::IsNullOrWhiteSpace($sub)) { return }
+
+    if ($sub -eq "7") {
+        Write-Host ""
+        Write-Host "Para habilitar comandos diretos no Discord (/progresso, /proximo, /marcar):" -ForegroundColor Cyan
+        Write-Host "  1. Acesse https://discord.com/developers/applications e crie um App chamado 'Nameless Deity'" -ForegroundColor Gray
+        Write-Host "  2. Na aba 'Bot', clique em 'Reset Token', copie o Token e cole abaixo." -ForegroundColor Gray
+        Write-Host "  3. Na aba 'OAuth2 -> URL Generator', marque 'bot' e 'applications.commands' e convide para seu servidor." -ForegroundColor Gray
+        Write-Host ""
+        $newToken = Read-Host "Cole o DISCORD_BOT_TOKEN (ou deixe em branco para cancelar)"
+        if (-not [string]::IsNullOrWhiteSpace($newToken)) {
+            $envPath = Join-Path $RootDir ".env"
+            $lines = @()
+            if (Test-Path $envPath) {
+                $lines = @(Get-Content $envPath -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch "^DISCORD_BOT_TOKEN=" })
+            }
+            $lines += "DISCORD_BOT_TOKEN=$($newToken.Trim())"
+            [System.IO.File]::WriteAllLines($envPath, [string[]]$lines)
+            Write-Host "[OK] DISCORD_BOT_TOKEN salvo no arquivo .env! Reinicie o servidor para conectar o bot." -ForegroundColor Green
+        }
+        return
+    }
+
+    if (-not $running) {
+        Write-Host "[AVISO] Inicie o servidor primeiro para sincronizar com o container e o Discord." -ForegroundColor Yellow
+        return
+    }
+
+    # Garante que a versao mais recente do script esteja no container em execucao
+    Get-Content (Join-Path $RootDir "scripts\nameless_deity.py") -Raw | docker exec -i servidor_tmodloader tee /terraria-server/scripts/nameless_deity.py >$null
+
+    switch ($sub) {
+        "1" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py next }
+        "2" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py bosses }
+        "3" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py objectives }
+        "4" {
+            $target = Read-Host "Digite o nome ou ID do Boss/Objetivo para MARCAR (ex: desert scourge, shimmer, lab_jungle)"
+            if (-not [string]::IsNullOrWhiteSpace($target)) {
+                docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py mark "$target"
+            }
+        }
+        "5" {
+            $target = Read-Host "Digite o nome ou ID do Boss/Objetivo para DESMARCAR"
+            if (-not [string]::IsNullOrWhiteSpace($target)) {
+                docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py unmark "$target"
+            }
+        }
+        "6" {
+            $goalText = Read-Host "Digite a descricao da nova meta do grupo"
+            if (-not [string]::IsNullOrWhiteSpace($goalText)) {
+                docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py add-goal "$goalText"
+            }
+        }
+    }
+}
+
 function Show-InteractiveMenu {
     while ($true) {
         Clear-Host
@@ -686,10 +763,11 @@ function Show-InteractiveMenu {
         Write-Host "  [5] Ver Logs ao Vivo / Diagnostico de Mods" -ForegroundColor White
         Write-Host "  [6] Enviar Comando para o Console do Terraria (say, save, noon...)" -ForegroundColor Magenta
         Write-Host "  [7] Abrir Painel Web (Portainer - Porta 9443)" -ForegroundColor Blue
-        Write-Host "  [8] Executar Bateria de Testes Automatizados (12 Testes)" -ForegroundColor DarkCyan
+        Write-Host "  [8] Executar Bateria de Testes Automatizados (13 Testes)" -ForegroundColor DarkCyan
         Write-Host "  [9] Reverter configuracoes do app neste PC (Firewall, containers, imagens)" -ForegroundColor DarkYellow
         Write-Host "  [10] Alterar Provedor de Rede / VPN (Radmin / Tailscale / Hibrido / Local)" -ForegroundColor Green
         Write-Host "  [11] Atualizar Imagens do Servidor (docker pull + rebuild --pull)" -ForegroundColor Cyan
+        Write-Host "  [12] Guardiao Nameless Deity (Progresso Linear, Bosses, Objetivos e Bot Discord)" -ForegroundColor Yellow
         Write-Host "  [0] Sair" -ForegroundColor Gray
         Write-Host "==================================================================" -ForegroundColor Cyan
 
@@ -710,6 +788,7 @@ function Show-InteractiveMenu {
                 Pause
             }
             "11" { Update-TerrariaServer; Pause }
+            "12" { Manage-NamelessDeityProgression; Pause }
             "0" { return }
             default { }
         }
@@ -717,15 +796,16 @@ function Show-InteractiveMenu {
 }
 
 switch ($Action) {
-    "Start"     { Start-TerrariaServer }
-    "Stop"      { Stop-TerrariaServer }
-    "Backup"    { Invoke-ManualBackup }
-    "Restore"   { Invoke-RestoreBackup }
-    "Logs"      { Show-LogsAndDiagnostics }
-    "Command"   { Send-TerrariaCommand }
-    "Test"      { & (Join-Path $PSScriptRoot "testar_servidor.ps1") }
-    "Uninstall" { Uninstall-TerrariaEnvironment }
-    "Network"   { Select-NetworkProvider -ForceInteractive $true | Out-Null }
-    "Update"    { Update-TerrariaServer }
-    "Menu"      { Show-InteractiveMenu }
+    "Start"       { Start-TerrariaServer }
+    "Stop"        { Stop-TerrariaServer }
+    "Backup"      { Invoke-ManualBackup }
+    "Restore"     { Invoke-RestoreBackup }
+    "Logs"        { Show-LogsAndDiagnostics }
+    "Command"     { Send-TerrariaCommand }
+    "Test"        { & (Join-Path $PSScriptRoot "testar_servidor.ps1") }
+    "Uninstall"   { Uninstall-TerrariaEnvironment }
+    "Network"     { Select-NetworkProvider -ForceInteractive $true | Out-Null }
+    "Update"      { Update-TerrariaServer }
+    "Progression" { Manage-NamelessDeityProgression }
+    "Menu"        { Show-InteractiveMenu }
 }

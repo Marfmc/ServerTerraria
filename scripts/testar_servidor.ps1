@@ -21,11 +21,11 @@ function Run-Test {
         [string]$Name,
         [scriptblock]$TestBlock
     )
-    Write-Host ("[{0:D2}/12] Testando: {1}..." -f $Number, $Name) -ForegroundColor Cyan -NoNewline
+    Write-Host ("[{0:D2}/13] Testando: {1}..." -f $Number, $Name) -ForegroundColor Cyan -NoNewline
     try {
         $detail = & $TestBlock
         Write-Host "`r[PASSOU] " -ForegroundColor Green -NoNewline
-        Write-Host ("[{0:D2}/12] {1}" -f $Number, $Name) -ForegroundColor Green
+        Write-Host ("[{0:D2}/13] {1}" -f $Number, $Name) -ForegroundColor Green
         if ($detail) {
             Write-Host "         -> $detail" -ForegroundColor DarkGreen
         }
@@ -39,7 +39,7 @@ function Run-Test {
     } catch {
         $errMsg = $_.Exception.Message
         Write-Host "`r[FALHOU] " -ForegroundColor Red -NoNewline
-        Write-Host ("[{0:D2}/12] {1}" -f $Number, $Name) -ForegroundColor Red
+        Write-Host ("[{0:D2}/13] {1}" -f $Number, $Name) -ForegroundColor Red
         Write-Host "         [LOG DO ERRO]: $errMsg" -ForegroundColor Red
         $Results.Add([PSCustomObject]@{
             Number = $Number
@@ -337,14 +337,15 @@ print(res.stdout)
     }
 
     # ------------------------------------------------------------------
-    # TESTE 12: Integracao com Discord Webhook (.env e Conectividade API)
+    # TESTE 12: Integracao com Discord Webhook e Bot Nameless Deity (.env e API)
     # ------------------------------------------------------------------
-    Run-Test -Number 12 -Name "Configuracao e Conectividade do Webhook do Discord" -TestBlock {
+    Run-Test -Number 12 -Name "Configuracao e Conectividade do Discord (Webhook + Bot Token)" -TestBlock {
         $envFile = Join-Path $RootDir ".env"
         if (-not (Test-Path $envFile)) {
             throw "Arquivo .env nao encontrado na raiz."
         }
-        $whLine = Get-Content $envFile | Where-Object { $_ -match "^DISCORD_WEBHOOK_URL=(.+)$" } | Select-Object -First 1
+        $envLines = Get-Content $envFile
+        $whLine = $envLines | Where-Object { $_ -match "^DISCORD_WEBHOOK_URL=(.+)$" } | Select-Object -First 1
         if (-not $whLine) {
             return "Variavel DISCORD_WEBHOOK_URL vazia (opcional)"
         }
@@ -353,7 +354,33 @@ print(res.stdout)
         if (-not $resp.id) {
             throw "Resposta inesperada da API do Discord para o Webhook."
         }
-        return "Webhook valido e conectado ao Discord (Nome: '$($resp.name)', Canal ID: $($resp.channel_id))"
+        $botStatus = "Token de Bot vazio (opcional)"
+        $botLine = $envLines | Where-Object { $_ -match "^DISCORD_BOT_TOKEN=(.+)$" } | Select-Object -First 1
+        if ($botLine) {
+            $botTok = ($botLine -replace "^DISCORD_BOT_TOKEN=", "").Trim()
+            if ($botTok) {
+                $botHeaders = @{ Authorization = "Bot $botTok" }
+                $botMe = Invoke-RestMethod -Method Get -Uri "https://discord.com/api/v10/users/@me" -Headers $botHeaders -TimeoutSec 10
+                if (-not $botMe.id) {
+                    throw "DISCORD_BOT_TOKEN configurado mas rejeitado pela API do Discord."
+                }
+                $botStatus = "Bot '$($botMe.username)' autenticado"
+            }
+        }
+        return "Webhook '$($resp.name)' OK | $botStatus"
+    }
+
+    # ------------------------------------------------------------------
+    # TESTE 13: Guardiao Nameless Deity (Parser .twld NBT, Bosses e Objetivos)
+    # ------------------------------------------------------------------
+    Run-Test -Number 13 -Name "Guardiao Nameless Deity (Parser .twld NBT, Bosses e Objetivos)" -TestBlock {
+        Get-Content (Join-Path $RootDir "scripts\nameless_deity.py") -Raw | docker exec -i servidor_tmodloader tee /terraria-server/scripts/nameless_deity.py >$null
+        $ndOut = docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py self-test 2>&1
+        $ndText = $ndOut | Out-String
+        if ($LASTEXITCODE -ne 0 -or $ndText -notmatch "OK_NAMELESS_DEITY_SELFTEST") {
+            throw "Falha no auto-teste do nameless_deity.py: $ndText"
+        }
+        return "Parser NBT (.twld), linha do tempo Calamity e comandos (!marcar / !meta) validados"
     }
 
 } finally {
@@ -400,7 +427,7 @@ $failedCount = @($Results | Where-Object { -not $_.Passed }).Count
 Write-Host ""
 Write-Host "==================================================================" -ForegroundColor Cyan
 if ($failedCount -eq 0) {
-    Write-Host ("   RESULTADO FINAL: {0}/12 TESTES APROVADOS COM SUCESSO!          " -f $passedCount) -ForegroundColor Green
+    Write-Host ("   RESULTADO FINAL: {0}/13 TESTES APROVADOS COM SUCESSO!          " -f $passedCount) -ForegroundColor Green
 } else {
     Write-Host ("   RESULTADO FINAL: {0} APROVADOS | {1} FALHARAM                  " -f $passedCount, $failedCount) -ForegroundColor Red
 }

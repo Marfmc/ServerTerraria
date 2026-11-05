@@ -75,6 +75,9 @@ create_backup() {
     if [ -f "$twld_file" ]; then
         files_to_zip+=("${WORLD_NAME}.twld")
     fi
+    if [ -f "${WORLD_NAME}_progression.json" ]; then
+        files_to_zip+=("${WORLD_NAME}_progression.json")
+    fi
 
     if zip -q "$zip_path" "${files_to_zip[@]}"; then
         if unzip -t -qq "$zip_path" >/dev/null 2>&1; then

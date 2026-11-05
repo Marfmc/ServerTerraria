@@ -118,7 +118,11 @@ function shutdown() {
         done
     fi
 
-    echo "[SYSTEM] Criando backup de desligamento na pasta Backups/..."
+    echo "[SYSTEM] Sincronizando progresso linear (Nameless Deity) e criando backup de desligamento..."
+    python3 /terraria-server/scripts/nameless_deity.py sync-world 2>/dev/null || true
+    if [ -n "${NAMELESS_PID:-}" ]; then
+        kill "$NAMELESS_PID" 2>/dev/null || true
+    fi
     /terraria-server/scripts/backup_manager.sh create shutdown
     python3 /terraria-server/scripts/discord_notify.py offline
     rm -f "$pipe"
@@ -143,6 +147,10 @@ tmux new-session -d "$server 2>&1 | tee -a $console_log > $pipe"
 # Inicia o Autosave nativo em background
 /terraria-server/autosave.sh &
 AUTOSAVE_PID=$!
+
+# Inicia o Guardião da Progressão Linear e Bot Discord (Nameless Deity) em background
+python3 /terraria-server/scripts/nameless_deity.py daemon &
+NAMELESS_PID=$!
 
 # Redireciona o pipe para o stdout do container (para aparecer no docker logs)
 cat "$pipe" &

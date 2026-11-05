@@ -38,6 +38,8 @@ services:
       - TAILSCALE_IP=${TAILSCALE_IP:-}
       # Cole abaixo a URL do Webhook do seu canal do Discord para receber avisos de Online/Offline/Erros:
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+      # Token do Bot do Discord "Nameless Deity" (Opcional - habilita /progresso, /proximo, /bosses, /marcar no Discord):
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
     volumes:
       - ./Worlds:/data/tModLoader/Worlds
       - ./Mods:/data/tModLoader/Mods
