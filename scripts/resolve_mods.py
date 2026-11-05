@@ -217,6 +217,25 @@ def resolve_dependencies_and_titles(mod_ids: list[str]) -> tuple[list[str], dict
     return all_ids, titles
 
 
+def version_sort_key(path_or_name: str) -> list:
+    """
+    Chave de ordenação natural/semântica para subpastas de versão (ex: 2024.10 vs 2024.8).
+    Garante que versões com meses de 2 dígitos (2024.10) venham após 1 dígito (2024.8)
+    e que subpastas de versão recebam precedência correta.
+    """
+    name = os.path.basename(path_or_name)
+    parts = re.split(r"(\d+)", name)
+    key = []
+    for part in parts:
+        if not part:
+            continue
+        if part.isdigit():
+            key.append((0, int(part)))
+        else:
+            key.append((1, part.lower()))
+    return key
+
+
 def find_tmod_for_workshop_id(mod_id: str) -> list[str]:
     """Retorna os nomes internos (sem .tmod) encontrados na pasta do Workshop para um ID."""
     target_dir = os.path.join(WORKSHOP_CONTENT_DIR, str(mod_id))
@@ -228,12 +247,12 @@ def find_tmod_for_workshop_id(mod_id: str) -> list[str]:
     if not tmod_files:
         return []
 
-    # Se houver múltiplas versões em subpastas (ex: 1.4.3 vs 1.4.4/2026.x), pega a subpasta mais recente
-    subdirs = sorted(
-        [d for d in glob.glob(os.path.join(target_dir, "*")) if os.path.isdir(d)]
-    )
-    if subdirs:
-        latest_subdir = subdirs[-1]
+    # Se houver múltiplas versões em subpastas (ex: 1.4.3 vs 1.4.4 ou 2024.8 vs 2024.10),
+    # filtra apenas as subpastas que de fato contêm arquivos .tmod e seleciona a versão mais recente
+    subdirs = [d for d in glob.glob(os.path.join(target_dir, "*")) if os.path.isdir(d)]
+    subdirs_with_tmod = [d for d in subdirs if glob.glob(os.path.join(d, "*.tmod"))]
+    if subdirs_with_tmod:
+        latest_subdir = max(subdirs_with_tmod, key=version_sort_key)
         sub_tmods = glob.glob(os.path.join(latest_subdir, "*.tmod"))
         if sub_tmods:
             tmod_files = sub_tmods

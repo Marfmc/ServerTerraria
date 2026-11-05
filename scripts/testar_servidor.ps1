@@ -245,11 +245,17 @@ try {
     # TESTE 09: Resolucao Inteligente de Mods e API da Steam Workshop
     # ------------------------------------------------------------------
     Run-Test -Number 9 -Name "Resolucao de Links/Colecoes da Steam Workshop (resolve_mods.py)" -TestBlock {
+        Get-Content (Join-Path $RootDir "scripts\resolve_mods.py") -Raw | docker exec -i servidor_tmodloader tee /terraria-server/scripts/resolve_mods.py >$null
         $pyTest = @'
 import sys
 sys.path.insert(0, '/terraria-server/scripts')
 import resolve_mods
 
+# 1. Valida ordenacao semantica de subpastas de versao (ex: 2024.10 vs 2024.8)
+sorted_v = sorted(['2024.8', '2024.10', '1.4.3', '1.4.4'], key=resolve_mods.version_sort_key)
+assert sorted_v == ['1.4.3', '1.4.4', '2024.8', '2024.10'], f'Ordenacao semantica falhou: {sorted_v}'
+
+# 2. Valida extracao de IDs e links
 ids = []
 for line in [
     '2824688072 # comentario',

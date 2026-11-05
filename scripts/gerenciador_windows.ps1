@@ -2,7 +2,7 @@
 # Gerenciador Completo do Servidor Terraria (tModLoader Docker) para Windows
 # ==============================================================================
 param(
-    [ValidateSet("Start", "Stop", "Menu", "Backup", "Restore", "Logs", "Command", "Test", "Uninstall", "Network")]
+    [ValidateSet("Start", "Stop", "Menu", "Backup", "Restore", "Logs", "Command", "Test", "Uninstall", "Network", "Update")]
     [string]$Action = "Menu"
 )
 
@@ -609,6 +609,56 @@ function Send-TerrariaCommand {
     docker logs --tail 10 servidor_tmodloader
 }
 
+function Update-TerrariaServer {
+    Write-Header "VERIFICAR E ATUALIZAR IMAGENS DO SERVIDOR (DOCKER PULL)"
+    Write-Host "Esta operacao baixa as versoes mais recentes das imagens no Docker Hub:" -ForegroundColor Cyan
+    Write-Host "  - tModLoader Server (jacobsmile/tmodloader1.4:latest)" -ForegroundColor White
+    Write-Host "  - Tailscale VPN (tailscale/tailscale:stable)" -ForegroundColor White
+    Write-Host "  - Portainer CE (portainer/portainer-ce:lts)" -ForegroundColor White
+    Write-Host "E reconstrói a imagem local do tModLoader com base e dependencias atualizadas." -ForegroundColor Gray
+    Write-Host ""
+    $confirm = Read-Host "Deseja verificar e baixar as atualizacoes agora? (S/N)"
+    if ($confirm -notmatch "^[sS]") {
+        Write-Host "Atualizacao cancelada." -ForegroundColor Gray
+        return
+    }
+
+    Ensure-DockerEngine
+
+    $running = [bool](docker ps -q -f name=servidor_tmodloader 2>$null)
+    if ($running) {
+        Write-Host ""
+        Write-Host "[AVISO] O servidor esta rodando. Desligando com seguranca (salvando mundo)..." -ForegroundColor Yellow
+        Stop-TerrariaServer
+    }
+
+    Write-Host ""
+    Write-Host "[DOCKER PULL] Baixando imagem base do tModLoader..." -ForegroundColor Cyan
+    docker pull jacobsmile/tmodloader1.4:latest
+    Write-Host "[DOCKER PULL] Baixando imagem do Tailscale VPN..." -ForegroundColor Cyan
+    docker pull tailscale/tailscale:stable
+    Write-Host "[DOCKER PULL] Baixando imagem do Portainer CE..." -ForegroundColor Cyan
+    docker pull portainer/portainer-ce:lts
+
+    Write-Host ""
+    Write-Host "[BUILD] Reconstruindo imagem local do tModLoader (--pull)..." -ForegroundColor Cyan
+    docker-compose build --pull tmodloader
+
+    Write-Host ""
+    Write-Host "==================================================================" -ForegroundColor Green
+    Write-Host " [OK] IMAGENS E DEPENDENCIAS ATUALIZADAS COM SUCESSO!" -ForegroundColor Green
+    Write-Host "==================================================================" -ForegroundColor Green
+    Write-Host "Dica: Inicie o servidor (Opcao [1]) para rodar com a versao atualizada." -ForegroundColor Cyan
+
+    if ($running) {
+        Write-Host ""
+        $restart = Read-Host "Deseja iniciar o servidor agora na versao atualizada? (S/N)"
+        if ($restart -match "^[sS]") {
+            Start-TerrariaServer
+        }
+    }
+}
+
 function Show-InteractiveMenu {
     while ($true) {
         Clear-Host
@@ -629,7 +679,7 @@ function Show-InteractiveMenu {
         Write-Host "  IP Tailscale VPN   : $tsText"
         Write-Host "  Backups Salvos     : $backupsCount / 10 (na pasta Backups/)"
         Write-Host "==================================================================" -ForegroundColor Cyan
-        Write-Host "  [1] Iniciar / Atualizar Servidor" -ForegroundColor Green
+        Write-Host "  [1] Iniciar Servidor (Acompanha logs e abre VPN)" -ForegroundColor Green
         Write-Host "  [2] Desligar Servidor com Seguranca (Salva Mundo + Backup)" -ForegroundColor Red
         Write-Host "  [3] Forcar Backup do Mundo Agora (.zip)" -ForegroundColor Cyan
         Write-Host "  [4] Restaurar um Backup Antigo (Escolher da lista)" -ForegroundColor Yellow
@@ -639,6 +689,7 @@ function Show-InteractiveMenu {
         Write-Host "  [8] Executar Bateria de Testes Automatizados (12 Testes)" -ForegroundColor DarkCyan
         Write-Host "  [9] Reverter configuracoes do app neste PC (Firewall, containers, imagens)" -ForegroundColor DarkYellow
         Write-Host "  [10] Alterar Provedor de Rede / VPN (Radmin / Tailscale / Hibrido / Local)" -ForegroundColor Green
+        Write-Host "  [11] Atualizar Imagens do Servidor (docker pull + rebuild --pull)" -ForegroundColor Cyan
         Write-Host "  [0] Sair" -ForegroundColor Gray
         Write-Host "==================================================================" -ForegroundColor Cyan
 
@@ -658,6 +709,7 @@ function Show-InteractiveMenu {
                 Ensure-FirewallRules -Provider $newProv
                 Pause
             }
+            "11" { Update-TerrariaServer; Pause }
             "0" { return }
             default { }
         }
@@ -674,5 +726,6 @@ switch ($Action) {
     "Test"      { & (Join-Path $PSScriptRoot "testar_servidor.ps1") }
     "Uninstall" { Uninstall-TerrariaEnvironment }
     "Network"   { Select-NetworkProvider -ForceInteractive $true | Out-Null }
+    "Update"    { Update-TerrariaServer }
     "Menu"      { Show-InteractiveMenu }
 }
