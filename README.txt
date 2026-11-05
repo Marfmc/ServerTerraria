@@ -130,23 +130,29 @@ C) Usando o Painel de Controle Interativo ("PainelMenu.bat"):
   O Tailscale deste projeto roda 100% dentro do Docker! Você NÃO precisa instalar
   o programa do Tailscale no Windows do servidor:
   1. Escolha a opção [2] (Tailscale) ou [3] (Híbrido) ao iniciar.
-  2. Na primeira vez que o container "vpn_tailscale" subir, ele abrirá uma página
-     no seu navegador para você fazer login no Tailscale e autorizar o servidor
-     (esse login fica salvo para sempre no Docker).
-     -> Dica Avançada (Opcional): Se quiser que o servidor conecte sem abrir o
-        navegador, gere uma Auth Key no site do Tailscale (Settings -> Keys) e
-        cole no arquivo ".env" na linha: TS_AUTHKEY=tskey-auth-xxxxx
+  2. Na primeira vez que o container "vpn_tailscale" subir, o script capturará o
+     link de login nos logs (também visível com "docker logs vpn_tailscale") e
+     abrirá uma página no seu navegador para você autorizar o servidor (a sessão
+     fica salva no volume Docker "tailscale_data").
+     -> Dica Avançada (Opcional): Para autenticar sem navegador no primeiro login,
+        gere uma Auth Key no painel do Tailscale (Settings -> Keys) e cole no
+        arquivo ".env" na linha: TS_AUTHKEY=tskey-auth-xxxxx
   3. No painel web do Tailscale (https://login.tailscale.com/admin/machines),
-     clique nos três pontinhos ao lado da máquina "terraria-tmodloader" ->
-     "Share..." e mande o link de convite para seus amigos (eles só precisam ter
-     o Tailscale instalado no PC deles e aceitar o convite).
+     clique nos três pontinhos (...) ao lado da máquina "terraria-tmodloader":
+     - Clique em "Disable key expiry" (Desativar expiração de chave, pois por
+       padrão o Tailscale expira máquinas após 180 dias).
+     - Clique em "Share..." para gerar o link de convite para seus amigos (eles
+       criam uma conta gratuita no Tailscale, instalam o app no PC deles e
+       aceitam o convite).
   4. O painel do servidor (e o aviso no Discord) mostrará o IP do Tailscale
      (exemplo: 100.101.50.25:7777). Seus amigos digitam esse IP no tModLoader!
 
-* Administração Remota (Portainer):
-  Você pode gerenciar os containers pelo navegador acessando:
+* Administração Remota (Portainer - Porta 9443):
+  Você (ou seus amigos administradores) podem gerenciar e reiniciar o servidor
+  pelo navegador sem derrubar a VPN acessando:
   - No próprio PC: https://localhost:9443
-  - De outro PC na rede Radmin: https://<SEU_IP_RADMIN>:9443
+  - Pela rede Radmin VPN: https://<SEU_IP_RADMIN>:9443
+  - Pela rede Tailscale: https://<SEU_IP_TAILSCALE>:9443
 
 
 5. COMO ADICIONAR OU REMOVER MODS E COLEÇÕES
@@ -171,20 +177,24 @@ O que o servidor fará sozinho ao iniciar:
   - Baixará/atualizará tudo via SteamCMD e preencherá o "Mods/enabled.json".
 
 
-6. PERSONALIZANDO O MUNDO E CONFIGURAÇÕES (docker-compose.yml)
+6. PERSONALIZANDO O MUNDO, SENHA E CONFIGURAÇÕES (.env e docker-compose.yml)
 --------------------------------------------------------------------------------
-Para alterar configurações do mundo ou do servidor, edite o arquivo
-"docker-compose.yml" na raiz da pasta:
+A senha do servidor e chaves sensíveis ficam no arquivo ".env" (que é ignorado
+pelo Git para nunca vazar sua senha no GitHub; use o ".env.example" como base):
 
-  * TMOD_WORLDNAME=MundoPrincipal  -> Nome do mundo (carrega existente ou cria um novo)
-  * TMOD_WORLDSIZE=2               -> Tamanho ao criar mundo novo (1=Pequeno, 2=Médio, 3=Grande)
-  * TMOD_DIFFICULTY=0              -> Dificuldade (0=Clássico, 1=Expert, 2=Master, 3=Jornada)
-  * TMOD_MAXPLAYERS=8              -> Limite máximo de jogadores simultâneos
-  * TMOD_PASS=suasenha             -> Senha do servidor (use N/A para deixar sem senha)
-  * TMOD_AUTOSAVE_INTERVAL=10      -> Salvamento automático do mundo em memória (em minutos)
-  * BACKUP_INTERVAL_MINUTES=180    -> Intervalo para gerar arquivo .zip em Backups/ (em minutos)
-  * BACKUP_KEEP_COUNT=10           -> Quantidade máxima de backups .zip mantidos na pasta Backups/
-  * DISCORD_WEBHOOK_URL=           -> Link do Webhook do Discord (ou configure no arquivo .env)
+  * No arquivo ".env":
+    - TMOD_PASS=suasenha             -> Senha do servidor (use N/A para deixar sem senha)
+    - DISCORD_WEBHOOK_URL=           -> Link do Webhook do Discord
+    - TS_AUTHKEY=                    -> Chave opcional de primeiro login do Tailscale
+
+  * No arquivo "docker-compose.yml":
+    - TMOD_WORLDNAME=MundoPrincipal  -> Nome do mundo (carrega existente ou cria um novo)
+    - TMOD_WORLDSIZE=2               -> Tamanho ao criar mundo novo (1=Pequeno, 2=Médio, 3=Grande)
+    - TMOD_DIFFICULTY=0              -> Dificuldade (0=Clássico, 1=Expert, 2=Master, 3=Jornada)
+    - TMOD_MAXPLAYERS=8              -> Limite máximo de jogadores simultâneos
+    - TMOD_AUTOSAVE_INTERVAL=10      -> Salvamento automático do mundo em memória (em minutos)
+    - BACKUP_INTERVAL_MINUTES=180    -> Intervalo para gerar arquivo .zip em Backups/ (em minutos)
+    - BACKUP_KEEP_COUNT=10           -> Quantidade máxima de backups .zip mantidos na pasta Backups/
 
 Como criar e configurar o Webhook no Discord:
   1. No Discord, clique na Engrenagem (Editar Canal) ao lado do canal de texto desejado.

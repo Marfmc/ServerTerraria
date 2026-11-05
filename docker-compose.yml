@@ -55,7 +55,7 @@ services:
     tty: true
 
   portainer:
-    image: portainer/portainer-ce:latest
+    image: portainer/portainer-ce:lts
     container_name: gerenciador_portainer
     ports:
       - "9443:9443"
@@ -65,22 +65,27 @@ services:
     restart: always
 
   tailscale:
-    image: tailscale/tailscale:latest
+    image: tailscale/tailscale:stable
     container_name: vpn_tailscale
-    network_mode: "service:tmodloader"
-    depends_on:
-      - tmodloader
+    hostname: ${TS_HOSTNAME:-terraria-tmodloader}
+    entrypoint: ["/bin/sh", "-c", "tr -d '\\r' < /terraria-scripts/tailscale_router.sh | /bin/sh"]
+    ports:
+      - "41641:41641/udp"
     environment:
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
       - TS_ACCEPT_DNS=false
       - TS_AUTHKEY=${TS_AUTHKEY:-}
-      - TS_EXTRA_ARGS=--hostname=${TS_HOSTNAME:-terraria-tmodloader}
+      - TS_EXTRA_ARGS=--hostname=${TS_HOSTNAME:-terraria-tmodloader} --port=41641
     volumes:
       - tailscale_data:/var/lib/tailscale
       - /dev/net/tun:/dev/net/tun
+      - ./scripts:/terraria-scripts:ro
+      - ./Logs:/terraria-logs
     cap_add:
       - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
     restart: unless-stopped
 
 volumes:

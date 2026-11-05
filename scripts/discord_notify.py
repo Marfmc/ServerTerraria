@@ -17,6 +17,15 @@ SUMMARY_FILE = "/tmp/active_mods_summary.txt"
 
 
 def detect_tailscale_ip() -> str:
+    shared_ip_file = "/terraria-server/tModLoader-Logs/.tailscale_ip"
+    if os.path.exists(shared_ip_file):
+        try:
+            with open(shared_ip_file, "r", encoding="utf-8", errors="ignore") as f:
+                ip = f.read().strip()
+                if re.match(r"^100\.", ip):
+                    return ip
+        except Exception:
+            pass
     env_ip = os.environ.get("TAILSCALE_IP", "").strip()
     if env_ip:
         return env_ip

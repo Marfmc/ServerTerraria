@@ -37,6 +37,10 @@ function Get-EnvValue([string]$Key, [string]$Default = "") {
 
 function Update-EnvFile($Provider, $RadminIP, $TailscaleIP) {
     $envPath = Join-Path $RootDir ".env"
+    $examplePath = Join-Path $RootDir ".env.example"
+    if (-not (Test-Path $envPath) -and (Test-Path $examplePath)) {
+        Copy-Item $examplePath $envPath -Force
+    }
     $lines = @()
     if (Test-Path $envPath) {
         $lines = @(Get-Content $envPath -ErrorAction SilentlyContinue |
@@ -433,6 +437,7 @@ function Start-TerrariaServer {
         }
         if ($tsIP) {
             Write-Host " -> IP para Amigos (Tailscale VPN): ${tsIP}:7777" -ForegroundColor Cyan
+            Write-Host " -> Painel Portainer (Tailscale)  : https://${tsIP}:9443" -ForegroundColor Gray
         }
         if (-not $radminIP -and -not $tsIP -and $activeProvider -ne "local") {
             Write-Host " -> IP para Amigos (VPN)          : (Conecte sua VPN Radmin/Tailscale e copie o IP):7777" -ForegroundColor Yellow
@@ -551,7 +556,7 @@ function Uninstall-TerrariaEnvironment {
         docker info >$null 2>&1
         if ($LASTEXITCODE -eq 0) {
             docker-compose down --volumes --rmi local
-            docker rmi jacobsmile/tmodloader1.4:latest portainer/portainer-ce:latest tailscale/tailscale:latest 2>$null
+            docker rmi jacobsmile/tmodloader1.4:latest portainer/portainer-ce:lts portainer/portainer-ce:latest tailscale/tailscale:stable tailscale/tailscale:latest 2>$null
         }
     }
 
