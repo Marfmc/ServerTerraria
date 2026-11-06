@@ -50,6 +50,7 @@ O objetivo deste projeto é ser um servidor de Terraria (tModLoader 1.4) **100% 
     * Verificar/instalar Docker Desktop, WSL2 e Radmin VPN (`Famatech.RadminVPN`) via Winget, fornecer o menu interativo (com opção `[10]` para trocar provedor de rede, `[11]` para atualizar imagens e `[12]` para gerenciar o Guardião `Nameless Deity` / configurar `DISCORD_BOT_TOKEN`) e reverter tudo (`-Action Uninstall`, opção `[9]` do menu: remove regras de Firewall, containers `servidor_tmodloader`, `gerenciador_portainer`, `vpn_tailscale`, volumes e imagens do projeto).
   * **Contexto de uso:** o PC de desenvolvimento do usuário NÃO é o servidor; o servidor roda em outra máquina. Evite deixar alterações de sistema (firewall, containers) no PC de desenvolvimento.
   * `testar_servidor.ps1`: Bateria de 13 testes automatizados ponta a ponta que valida todas as funções do servidor (incluindo o parser `.twld` NBT e comandos do `nameless_deity.py`), exibe resultados em verde/vermelho com logs detalhados e limpa 100% dos arquivos temporários de teste ao finalizar.
+  * `testar_bot_nameless.ps1`: Bancada de testes e simulador interativo isolado para o Bot `Nameless Deity` (sobe apenas o bot sem exigir o container do Terraria, simula conquistas `.twld`/logs/marcos/metas, abre painel estilo `PainelMenu` para testar Slash Commands no Discord e, ao encerrar, apaga automaticamente todas as mensagens de teste do canal do Discord e restaura os arquivos locais ao estado inicial).
 
 ---
 

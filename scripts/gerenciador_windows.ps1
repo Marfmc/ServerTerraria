@@ -66,8 +66,19 @@ function Get-RadminIP {
     }
 }
 
+function Test-IsContainerRunning([string]$ContainerName) {
+    $dockerProc = Get-Process -Name "com.docker.backend", "Docker Desktop", "dockerd" -ErrorAction SilentlyContinue
+    if (-not $dockerProc) {
+        return $false
+    }
+    return [bool](docker ps -q -f name=$ContainerName 2>$null)
+}
+
 function Get-TailscaleIP {
     try {
+        if (-not (Test-IsContainerRunning "vpn_tailscale") -and -not (Test-IsContainerRunning "servidor_tmodloader")) {
+            return $null
+        }
         $running = docker ps -q -f name=vpn_tailscale 2>$null
         if ($running) {
             $cliIp = docker exec vpn_tailscale tailscale ip -4 2>$null | Select-Object -First 1
@@ -660,77 +671,88 @@ function Update-TerrariaServer {
 }
 
 function Manage-NamelessDeityProgression {
-    Write-Header "GUARDIAO NAMELESS DEITY (PROGRESSAO LINEAR & BOT DISCORD)"
-    $running = [bool](docker ps -q -f name=servidor_tmodloader 2>$null)
-    $botToken = Get-EnvValue "DISCORD_BOT_TOKEN" ""
-    $tokenStatus = if ($botToken) { "Configurado (Ativo)" } else { "Nao configurado (Usando Webhook + Chat do Jogo)" }
+    $running = Test-IsContainerRunning "servidor_tmodloader"
 
-    Write-Host "  Bot Discord 'Nameless Deity' : $tokenStatus" -ForegroundColor Cyan
-    Write-Host "  Comandos no Chat do Jogo     : !progresso | !proximo | !bosses | !objetivos | !marcar <nome> | !meta <texto>" -ForegroundColor Gray
-    Write-Host "  Comandos no Discord          : /progresso | /proximo | /bosses | /objetivos | /marcar <nome> | /meta <texto>" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [1] Ver Proximo Boss (Invocacao e Bioma) e enviar ao Discord" -ForegroundColor Green
-    Write-Host "  [2] Ver Lista Completa de Bosses (Vanilla + Calamity) e enviar ao Discord" -ForegroundColor Cyan
-    Write-Host "  [3] Ver Marcos da Campanha e Metas do Grupo" -ForegroundColor Yellow
-    Write-Host "  [4] Marcar um Boss ou Objetivo como Concluido" -ForegroundColor White
-    Write-Host "  [5] Desmarcar um Boss ou Objetivo (Voltar para Pendente)" -ForegroundColor Gray
-    Write-Host "  [6] Adicionar Nova Meta Customizada para o Grupo" -ForegroundColor Magenta
-    Write-Host "  [7] Configurar Token do Bot Discord (DISCORD_BOT_TOKEN no .env)" -ForegroundColor Blue
-    Write-Host "  [0] Voltar" -ForegroundColor Gray
-    Write-Host ""
-
-    $sub = Read-Host "Escolha uma opcao"
-    if ($sub -eq "0" -or [string]::IsNullOrWhiteSpace($sub)) { return }
-
-    if ($sub -eq "7") {
-        Write-Host ""
-        Write-Host "Para habilitar comandos diretos no Discord (/progresso, /proximo, /marcar):" -ForegroundColor Cyan
-        Write-Host "  1. Acesse https://discord.com/developers/applications e crie um App chamado 'Nameless Deity'" -ForegroundColor Gray
-        Write-Host "  2. Na aba 'Bot', clique em 'Reset Token', copie o Token e cole abaixo." -ForegroundColor Gray
-        Write-Host "  3. Na aba 'OAuth2 -> URL Generator', marque 'bot' e 'applications.commands' e convide para seu servidor." -ForegroundColor Gray
-        Write-Host ""
-        $newToken = Read-Host "Cole o DISCORD_BOT_TOKEN (ou deixe em branco para cancelar)"
-        if (-not [string]::IsNullOrWhiteSpace($newToken)) {
-            $envPath = Join-Path $RootDir ".env"
-            $lines = @()
-            if (Test-Path $envPath) {
-                $lines = @(Get-Content $envPath -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch "^DISCORD_BOT_TOKEN=" })
-            }
-            $lines += "DISCORD_BOT_TOKEN=$($newToken.Trim())"
-            [System.IO.File]::WriteAllLines($envPath, [string[]]$lines)
-            Write-Host "[OK] DISCORD_BOT_TOKEN salvo no arquivo .env! Reinicie o servidor para conectar o bot." -ForegroundColor Green
-        }
-        return
-    }
-
+    # Se o servidor do Terraria estiver OFFLINE, ao clicar em [12] ja sobe automaticamente
+    # o Bot Nameless Deity em Modo Simulacao (com mundo e conquistas falsas pre-definidas)
+    # para testar todos os comandos pela tela e pelo Discord, desfazendo tudo ao sair!
     if (-not $running) {
-        Write-Host "[AVISO] Inicie o servidor primeiro para sincronizar com o container e o Discord." -ForegroundColor Yellow
+        & (Join-Path $PSScriptRoot "testar_bot_nameless.ps1")
         return
     }
 
-    # Garante que a versao mais recente do script esteja no container em execucao
-    Get-Content (Join-Path $RootDir "scripts\nameless_deity.py") -Raw | docker exec -i servidor_tmodloader tee /terraria-server/scripts/nameless_deity.py >$null
+    while ($true) {
+        Clear-Host
+        Write-Header "GUARDIAO NAMELESS DEITY (SERVIDOR ONLINE)"
+        $botToken = Get-EnvValue "DISCORD_BOT_TOKEN" ""
+        $tokenStatus = if ($botToken) { "Configurado (Ativo)" } else { "Nao configurado (Usando Webhook + Chat do Jogo)" }
 
-    switch ($sub) {
-        "1" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py next }
-        "2" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py bosses }
-        "3" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py objectives }
-        "4" {
-            $target = Read-Host "Digite o nome ou ID do Boss/Objetivo para MARCAR (ex: desert scourge, shimmer, lab_jungle)"
-            if (-not [string]::IsNullOrWhiteSpace($target)) {
-                docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py mark "$target"
-            }
+        Write-Host "  Bot Discord 'Nameless Deity' : $tokenStatus" -ForegroundColor Cyan
+        Write-Host "  Comandos no Chat do Jogo     : !progresso | !proximo | !bosses | !objetivos | !marcar <nome> | !meta <texto>" -ForegroundColor Gray
+        Write-Host "  Comandos no Discord          : /progresso | /proximo | /bosses | /objetivos | /marcar <nome> | /meta <texto>" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [1] Ver Proximo Boss (Invocacao e Bioma) e enviar ao Discord" -ForegroundColor Green
+        Write-Host "  [2] Ver Lista Completa de Bosses (Vanilla + Calamity) e enviar ao Discord" -ForegroundColor Cyan
+        Write-Host "  [3] Ver Marcos da Campanha e Metas do Grupo" -ForegroundColor Yellow
+        Write-Host "  [4] Marcar um Boss ou Objetivo como Concluido" -ForegroundColor White
+        Write-Host "  [5] Desmarcar um Boss ou Objetivo (Voltar para Pendente)" -ForegroundColor Gray
+        Write-Host "  [6] Adicionar Nova Meta Customizada para o Grupo" -ForegroundColor Magenta
+        Write-Host "  [7] Configurar Token do Bot Discord (DISCORD_BOT_TOKEN no .env)" -ForegroundColor Blue
+        Write-Host "  [8] Abrir Simulador Isolado do Bot (Testar com conquistas falsas)" -ForegroundColor Green
+        Write-Host "  [0] Voltar ao Menu Principal" -ForegroundColor Gray
+        Write-Host ""
+
+        $sub = Read-Host "Escolha uma opcao"
+        if ($sub -eq "0" -or [string]::IsNullOrWhiteSpace($sub)) { return }
+
+        if ($sub -eq "8") {
+            & (Join-Path $PSScriptRoot "testar_bot_nameless.ps1")
+            continue
         }
-        "5" {
-            $target = Read-Host "Digite o nome ou ID do Boss/Objetivo para DESMARCAR"
-            if (-not [string]::IsNullOrWhiteSpace($target)) {
-                docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py unmark "$target"
+
+        if ($sub -eq "7") {
+            Write-Host ""
+            $newToken = Read-Host "Cole o DISCORD_BOT_TOKEN (ou deixe em branco para cancelar)"
+            if (-not [string]::IsNullOrWhiteSpace($newToken)) {
+                $envPath = Join-Path $RootDir ".env"
+                $lines = @()
+                if (Test-Path $envPath) {
+                    $lines = @(Get-Content $envPath -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch "^DISCORD_BOT_TOKEN=" })
+                }
+                $lines += "DISCORD_BOT_TOKEN=$($newToken.Trim())"
+                [System.IO.File]::WriteAllLines($envPath, [string[]]$lines)
+                Write-Host "[OK] DISCORD_BOT_TOKEN salvo no arquivo .env! Reinicie o servidor para conectar o bot." -ForegroundColor Green
             }
+            Pause
+            continue
         }
-        "6" {
-            $goalText = Read-Host "Digite a descricao da nova meta do grupo"
-            if (-not [string]::IsNullOrWhiteSpace($goalText)) {
-                docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py add-goal "$goalText"
+
+        Get-Content (Join-Path $RootDir "scripts\nameless_deity.py") -Raw | docker exec -i servidor_tmodloader tee /terraria-server/scripts/nameless_deity.py >$null
+
+        switch ($sub) {
+            "1" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py next; Pause }
+            "2" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py bosses; Pause }
+            "3" { docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py objectives; Pause }
+            "4" {
+                $target = Read-Host "Digite o nome ou ID do Boss/Objetivo para MARCAR (ex: desert scourge, shimmer, lab_jungle)"
+                if (-not [string]::IsNullOrWhiteSpace($target)) {
+                    docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py mark "$target"
+                }
+                Pause
+            }
+            "5" {
+                $target = Read-Host "Digite o nome ou ID do Boss/Objetivo para DESMARCAR"
+                if (-not [string]::IsNullOrWhiteSpace($target)) {
+                    docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py unmark "$target"
+                }
+                Pause
+            }
+            "6" {
+                $goalText = Read-Host "Digite a descricao da nova meta do grupo"
+                if (-not [string]::IsNullOrWhiteSpace($goalText)) {
+                    docker exec servidor_tmodloader python3 /terraria-server/scripts/nameless_deity.py add-goal "$goalText"
+                }
+                Pause
             }
         }
     }
@@ -739,7 +761,7 @@ function Manage-NamelessDeityProgression {
 function Show-InteractiveMenu {
     while ($true) {
         Clear-Host
-        $running = [bool](docker ps -q -f name=servidor_tmodloader 2>$null)
+        $running = Test-IsContainerRunning "servidor_tmodloader"
         $statusText = if ($running) { "[ONLINE]" } else { "[OFFLINE]" }
         $currentProvider = (Get-EnvValue "NETWORK_PROVIDER" "radmin").ToUpper()
         $radminIP = Get-RadminIP
@@ -771,7 +793,7 @@ function Show-InteractiveMenu {
         Write-Host "  [0] Sair" -ForegroundColor Gray
         Write-Host "==================================================================" -ForegroundColor Cyan
 
-        $opt = Read-Host "Escolha uma opcao"
+        $opt = (Read-Host "Escolha uma opcao").Trim()
         switch ($opt) {
             "1" { Start-TerrariaServer; Pause }
             "2" { Stop-TerrariaServer; Pause }
@@ -788,7 +810,7 @@ function Show-InteractiveMenu {
                 Pause
             }
             "11" { Update-TerrariaServer; Pause }
-            "12" { Manage-NamelessDeityProgression; Pause }
+            "12" { Manage-NamelessDeityProgression }
             "0" { return }
             default { }
         }

@@ -44,6 +44,25 @@ COLOR_COSMIC_PURPLE = 0x9B59B6
 COLOR_COSMIC_CYAN = 0x00E5FF
 COLOR_COSMIC_GREEN = 0x2ECC71
 
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+
+def _record_sent_discord_item(entry: str) -> None:
+    rec_file = os.environ.get("NAMELESS_RECORD_SENT_FILE", "").strip()
+    if not rec_file:
+        return
+    try:
+        with open(rec_file, "a", encoding="utf-8") as f:
+            f.write(entry.strip() + "\n")
+    except Exception:
+        pass
+
 # ==============================================================================
 # 1. CATÁLOGO LINEAR DE BOSSES (VANILLA + CALAMITY + ADDONS)
 # ==============================================================================
@@ -1416,9 +1435,11 @@ def send_to_webhook(embed: Dict[str, Any], content: str = "") -> bool:
     if content:
         payload["content"] = content
     try:
+        sep = "&" if "?" in webhook_url else "?"
+        target_url = f"{webhook_url}{sep}wait=true"
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            webhook_url,
+            target_url,
             data=data,
             headers={
                 "Content-Type": "application/json",
@@ -1426,8 +1447,12 @@ def send_to_webhook(embed: Dict[str, Any], content: str = "") -> bool:
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10) as _:
-            pass
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+            if raw:
+                msg_obj = json.loads(raw)
+                if isinstance(msg_obj, dict) and msg_obj.get("id"):
+                    _record_sent_discord_item(f"WEBHOOK|{msg_obj['id']}")
         return True
     except Exception as e:
         print(f"[NAMELESS DEITY] Aviso ao enviar Webhook: {e}", flush=True)
@@ -1907,6 +1932,8 @@ class NamelessDeityDiscordBot:
                 f"/interactions/{inter_id}/{inter_token}/callback",
                 {"type": 4, "data": resp_data},
             )
+            if self.app_id and inter_token:
+                _record_sent_discord_item(f"INTERACTION|{self.app_id}|{inter_token}")
         except Exception as e:
             print(f"[NAMELESS DEITY] Erro ao responder Slash Command /{cmd_name}: {e}", flush=True)
 
@@ -1944,7 +1971,9 @@ class NamelessDeityDiscordBot:
             payload["embeds"] = [res["embed"]]
 
         try:
-            self._api_request("POST", f"/channels/{channel_id}/messages", payload)
+            sent_msg = self._api_request("POST", f"/channels/{channel_id}/messages", payload)
+            if isinstance(sent_msg, dict) and sent_msg.get("id"):
+                _record_sent_discord_item(f"BOT_MSG|{channel_id}|{sent_msg['id']}")
         except Exception as e:
             print(f"[NAMELESS DEITY] Erro ao enviar mensagem no canal {channel_id}: {e}", flush=True)
 
@@ -2179,6 +2208,66 @@ def run_self_test() -> int:
     return 0
 
 
+def cleanup_discord_test_messages(rec_file: str) -> int:
+    if not rec_file or not os.path.exists(rec_file):
+        return 0
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip().split("?")[0].rstrip("/")
+    bot_token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
+    deleted_count = 0
+
+    try:
+        with open(rec_file, "r", encoding="utf-8", errors="ignore") as f:
+            lines = [ln.strip() for ln in f.readlines() if ln.strip()]
+    except Exception:
+        return 0
+
+    for entry in reversed(lines):
+        parts = entry.split("|")
+        kind = parts[0]
+        try:
+            if kind == "WEBHOOK" and len(parts) >= 2 and webhook_url:
+                msg_id = parts[1]
+                del_url = f"{webhook_url}/messages/{msg_id}"
+                req = urllib.request.Request(
+                    del_url,
+                    headers={"User-Agent": "NamelessDeity-TerrariaBot/1.0"},
+                    method="DELETE",
+                )
+                with urllib.request.urlopen(req, timeout=10) as _:
+                    pass
+                deleted_count += 1
+            elif kind == "INTERACTION" and len(parts) >= 3:
+                app_id, inter_tok = parts[1], parts[2]
+                del_url = f"https://discord.com/api/v10/webhooks/{app_id}/{inter_tok}/messages/@original"
+                req = urllib.request.Request(
+                    del_url,
+                    headers={"User-Agent": "NamelessDeity-TerrariaBot/1.0"},
+                    method="DELETE",
+                )
+                with urllib.request.urlopen(req, timeout=10) as _:
+                    pass
+                deleted_count += 1
+            elif kind == "BOT_MSG" and len(parts) >= 3 and bot_token:
+                chan_id, msg_id = parts[1], parts[2]
+                del_url = f"https://discord.com/api/v10/channels/{chan_id}/messages/{msg_id}"
+                req = urllib.request.Request(
+                    del_url,
+                    headers={
+                        "Authorization": f"Bot {bot_token}",
+                        "User-Agent": "DiscordBot (https://github.com/ServerTerraria, 1.0)",
+                    },
+                    method="DELETE",
+                )
+                with urllib.request.urlopen(req, timeout=10) as _:
+                    pass
+                deleted_count += 1
+        except Exception:
+            pass
+
+    print(f"DELETED_DISCORD_MESSAGES:{deleted_count}")
+    return 0
+
+
 def main() -> int:
     action = sys.argv[1].lower() if len(sys.argv) > 1 else "status"
     arg = " ".join(sys.argv[2:]).strip() if len(sys.argv) > 2 else ""
@@ -2187,6 +2276,11 @@ def main() -> int:
         return run_daemon()
     if action == "self-test":
         return run_self_test()
+    if action == "cleanup-discord-test":
+        return cleanup_discord_test_messages(arg)
+    if action == "simulate-log":
+        process_log_line(arg)
+        return 0
     if action == "summary-line":
         print(build_summary_line())
         return 0
