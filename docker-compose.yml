@@ -1,6 +1,9 @@
 services:
   tmodloader:
-    build: .
+    build:
+      context: .
+      args:
+        TMOD_OFFICIAL_VERSION: ${TMOD_OFFICIAL_VERSION:-}
     container_name: servidor_tmodloader
     ports:
       - "7777:7777"

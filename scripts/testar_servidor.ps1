@@ -107,9 +107,9 @@ try {
     }
 
     # ------------------------------------------------------------------
-    # TESTE 02: Regras do Firewall do Windows (Portas 7777 e 9443)
+    # TESTE 02: Regras do Firewall do Windows (Portas 7777, 9443 e 41641)
     # ------------------------------------------------------------------
-    Run-Test -Number 2 -Name "Firewall do Windows (Portas 7777 TCP/UDP e 9443 TCP)" -TestBlock {
+    Run-Test -Number 2 -Name "Firewall do Windows (Portas 7777 TCP/UDP, 9443 TCP e 41641 UDP P2P)" -TestBlock {
         # Garante que as regras estejam criadas chamando a verificacao se necessario
         $rules = @("Terraria_tModLoader_7777_TCP", "Terraria_tModLoader_7777_UDP", "Terraria_Portainer_9443_TCP")
         $missing = @()
@@ -119,10 +119,12 @@ try {
                 $missing += $r
             }
         }
+        $tsRuleCheck = netsh advfirewall firewall show rule name="Terraria_Tailscale_41641_UDP" 2>&1
+        $tsStatus = if ($LASTEXITCODE -eq 0) { " + 41641 UDP Tailscale ativa" } else { "" }
         if ($missing.Count -gt 0) {
             return "Aviso: Regras pendentes de criacao no proximo IniciarServidor.bat ($($missing -join ', '))"
         }
-        return "Todas as 3 regras (7777 TCP/UDP e 9443 TCP) estao ativas no Firewall"
+        return "Regras principais (7777 TCP/UDP e 9443 TCP$tsStatus) ativas no Firewall"
     }
 
     # ------------------------------------------------------------------

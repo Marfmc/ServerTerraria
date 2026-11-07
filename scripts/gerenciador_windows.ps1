@@ -35,24 +35,37 @@ function Get-EnvValue([string]$Key, [string]$Default = "") {
     return $Default
 }
 
-function Update-EnvFile($Provider, $RadminIP, $TailscaleIP) {
+function Set-EnvValue([string]$Key, [string]$Value) {
     $envPath = Join-Path $RootDir ".env"
     $examplePath = Join-Path $RootDir ".env.example"
     if (-not (Test-Path $envPath) -and (Test-Path $examplePath)) {
         Copy-Item $examplePath $envPath -Force
     }
     $lines = @()
+    $found = $false
     if (Test-Path $envPath) {
-        $lines = @(Get-Content $envPath -ErrorAction SilentlyContinue |
-            Where-Object { $_ -notmatch "^(RADMIN_IP|TAILSCALE_IP|NETWORK_PROVIDER)=" })
+        $existingLines = Get-Content $envPath -ErrorAction SilentlyContinue
+        foreach ($line in $existingLines) {
+            if ($line -match "^$([regex]::Escape($Key))=") {
+                $lines += "$Key=$Value"
+                $found = $true
+            } else {
+                $lines += $line
+            }
+        }
     }
-    $provVal = if ($Provider) { $Provider } else { Get-EnvValue "NETWORK_PROVIDER" "radmin" }
-    $lines += "NETWORK_PROVIDER=$provVal"
-    $lines += "RADMIN_IP=$(if ($RadminIP) { $RadminIP } else { '' })"
-    $lines += "TAILSCALE_IP=$(if ($TailscaleIP) { $TailscaleIP } else { '' })"
+    if (-not $found) {
+        $lines += "$Key=$Value"
+    }
     # UTF-8 SEM BOM (o Set-Content -Encoding UTF8 do PowerShell 5.1 grava BOM, que pode
     # fazer o docker-compose ignorar a variavel da primeira linha do .env).
     [System.IO.File]::WriteAllLines($envPath, [string[]]$lines)
+}
+
+function Update-EnvFile($Provider, $RadminIP, $TailscaleIP) {
+    if ($Provider) { Set-EnvValue "NETWORK_PROVIDER" $Provider }
+    Set-EnvValue "RADMIN_IP" (if ($RadminIP) { $RadminIP } else { "" })
+    Set-EnvValue "TAILSCALE_IP" (if ($TailscaleIP) { $TailscaleIP } else { "" })
 }
 
 function Get-RadminIP {
@@ -105,14 +118,37 @@ function Get-TailscaleIP {
     }
 }
 
-function Restart-TailscaleSidecar {
-    # O container vpn_tailscale usa a rede do servidor_tmodloader (network_mode: service:...).
-    # Quando o servidor e reiniciado/restaurado, o sidecar fica preso a rede antiga e perde a
-    # conexao. Reiniciar o sidecar (somente se ele ja estiver rodando) o reanexa a rede nova.
-    $running = docker ps -q -f name=vpn_tailscale 2>$null
-    if ($running) {
-        Write-Host "[TAILSCALE] Reiniciando o container Tailscale para reanexar a rede do servidor..." -ForegroundColor Cyan
-        docker restart vpn_tailscale >$null 2>&1
+function Configure-TailscaleAuthKey {
+    $currentKey = Get-EnvValue "TS_AUTHKEY" ""
+    Write-Host ""
+    Write-Host "==================================================================" -ForegroundColor Yellow
+    Write-Host "  CONFIGURACAO DO TAILSCALE VPN (CONTAINER DOCKER)" -ForegroundColor White
+    Write-Host "==================================================================" -ForegroundColor Yellow
+    Write-Host "O Tailscale conecta o servidor a uma rede mesh privada (IP 100.x.y.z)." -ForegroundColor Cyan
+    Write-Host "Voce tem duas formas de autenticar:" -ForegroundColor White
+    Write-Host "  [Opcao A - Recomendado] Informar uma Auth Key (Login 100% automatico e silencioso):" -ForegroundColor White
+    Write-Host "    1. Acesse: https://login.tailscale.com/admin/settings/keys" -ForegroundColor DarkGray
+    Write-Host "    2. Clique em 'Generate auth key' (marque Reusable se quiser reutilizar) e copie a chave (tskey-auth-...)" -ForegroundColor DarkGray
+    Write-Host "  [Opcao B - Interativo] Deixar em branco para login via Navegador:" -ForegroundColor White
+    Write-Host "    Ao iniciar o servidor, o navegador sera aberto com o link de login da Tailscale." -ForegroundColor DarkGray
+    Write-Host ""
+
+    if ($currentKey) {
+        $maskedKey = if ($currentKey.Length -gt 15) { $currentKey.Substring(0, 10) + "..." + $currentKey.Substring($currentKey.Length - 4) } else { "******" }
+        Write-Host "Chave TS_AUTHKEY atual no .env: $maskedKey" -ForegroundColor Cyan
+        $resp = Read-Host "Deseja alterar a chave TS_AUTHKEY? (S/N) (Padrao: N)"
+        if ($resp -notmatch "^[sS]") {
+            return
+        }
+    }
+
+    $newKey = Read-Host "Cole sua Auth Key (tskey-auth-...) ou pressione [Enter] para autorizar via navegador"
+    if (-not [string]::IsNullOrWhiteSpace($newKey)) {
+        Set-EnvValue "TS_AUTHKEY" $newKey.Trim()
+        Write-Host "[OK] Chave TS_AUTHKEY salva no arquivo .env!" -ForegroundColor Green
+    } else {
+        Set-EnvValue "TS_AUTHKEY" ""
+        Write-Host "[INFO] TS_AUTHKEY deixada em branco. O link de login sera aberto ao iniciar o servidor." -ForegroundColor Gray
     }
 }
 
@@ -169,49 +205,75 @@ function Select-NetworkProvider([bool]$ForceInteractive = $false) {
         default { "radmin" }
     }
 
+    if ($selected -eq "tailscale" -or $selected -eq "hybrid") {
+        Configure-TailscaleAuthKey
+    }
+
     Update-EnvFile $selected (Get-RadminIP) (Get-TailscaleIP)
     Write-Host "[OK] Modo de rede definido como '$($selected.ToUpper())' e salvo no arquivo .env!" -ForegroundColor Green
     return $selected
 }
 
 function Ensure-FirewallRules([string]$Provider = "radmin") {
-    if ($Provider -eq "tailscale") {
-        Write-Host "[REDE] Tailscale roda direto dentro do container Docker (nao exige abrir Firewall para VPN no Windows)." -ForegroundColor Green
-        return
+    $prov = $Provider.ToLower()
+    $needsTsFw = ($prov -eq "tailscale" -or $prov -eq "hybrid")
+    $needsTerrariaFw = ($prov -eq "radmin" -or $prov -eq "hybrid" -or $prov -eq "local" -or $prov -eq "tailscale")
+
+    $commandsToRun = @()
+
+    # 1. Regra para conexoes diretas P2P do Tailscale WireGuard (Porta 41641/UDP)
+    if ($needsTsFw) {
+        $tsRuleCheck = netsh advfirewall firewall show rule name="Terraria_Tailscale_41641_UDP" verbose 2>$null | Out-String
+        if ($LASTEXITCODE -ne 0 -or -not ($tsRuleCheck -match "41641")) {
+            Write-Host "[FIREWALL] Liberando porta 41641 (UDP) para conexoes diretas P2P do Tailscale WireGuard..." -ForegroundColor Yellow
+            $commandsToRun += 'netsh advfirewall firewall delete rule name="Terraria_Tailscale_41641_UDP" >nul 2>&1'
+            $commandsToRun += 'netsh advfirewall firewall add rule name="Terraria_Tailscale_41641_UDP" dir=in action=allow protocol=UDP localport=41641 profile=any >nul'
+        } else {
+            Write-Host "[OK] Regra do Firewall para Tailscale (Porta 41641 UDP P2P) ativa." -ForegroundColor Green
+        }
     }
 
-    $remoteIps = switch ($Provider.ToLower()) {
-        "hybrid"    { "26.0.0.0/8,LocalSubnet" }
-        "local"     { "LocalSubnet" }
-        default     { "26.0.0.0/8,LocalSubnet" }
+    # 2. Regras para Terraria (7777 TCP/UDP) e Portainer (9443 TCP)
+    if ($needsTerrariaFw) {
+        $remoteIps = switch ($prov) {
+            "hybrid"    { "26.0.0.0/8,LocalSubnet" }
+            "radmin"    { "26.0.0.0/8,LocalSubnet" }
+            default     { "LocalSubnet" }
+        }
+
+        $ruleCheck = netsh advfirewall firewall show rule name="Terraria_tModLoader_7777_TCP" verbose 2>$null | Out-String
+        $needsUpdate = $false
+        if ($LASTEXITCODE -ne 0) {
+            $needsUpdate = $true
+        } elseif (($prov -eq "radmin" -or $prov -eq "hybrid") -and ($ruleCheck -notmatch "26\.0\.0\.0")) {
+            $needsUpdate = $true
+        } elseif (($prov -eq "local" -or $prov -eq "tailscale") -and ($ruleCheck -notmatch "LocalSubnet")) {
+            $needsUpdate = $true
+        }
+
+        if ($needsUpdate) {
+            Write-Host "[FIREWALL] Configurando liberacao das portas 7777 (Jogo) e 9443 (Portainer) no Firewall ($remoteIps)..." -ForegroundColor Yellow
+            $commandsToRun += 'netsh advfirewall firewall delete rule name="Terraria_tModLoader_7777_TCP" >nul 2>&1'
+            $commandsToRun += 'netsh advfirewall firewall delete rule name="Terraria_tModLoader_7777_UDP" >nul 2>&1'
+            $commandsToRun += 'netsh advfirewall firewall delete rule name="Terraria_Portainer_9443_TCP" >nul 2>&1'
+            $commandsToRun += "netsh advfirewall firewall add rule name=`"Terraria_tModLoader_7777_TCP`" dir=in action=allow protocol=TCP localport=7777 remoteip=$remoteIps profile=any >nul"
+            $commandsToRun += "netsh advfirewall firewall add rule name=`"Terraria_tModLoader_7777_UDP`" dir=in action=allow protocol=UDP localport=7777 remoteip=$remoteIps profile=any >nul"
+            $commandsToRun += "netsh advfirewall firewall add rule name=`"Terraria_Portainer_9443_TCP`" dir=in action=allow protocol=TCP localport=9443 remoteip=$remoteIps profile=any >nul"
+        } else {
+            Write-Host "[OK] Regras do Firewall (Portas 7777 e 9443) ativas para '$Provider'." -ForegroundColor Green
+        }
     }
 
-    $ruleCheck = netsh advfirewall firewall show rule name="Terraria_tModLoader_7777_TCP" verbose 2>$null | Out-String
-    if ($LASTEXITCODE -eq 0 -and (
-        (($Provider -eq "radmin" -or $Provider -eq "hybrid") -and $ruleCheck -match "26\.0\.0\.0") -or
-        ($Provider -eq "local" -and $ruleCheck -match "LocalSubnet")
-    )) {
-        Write-Host "[OK] Regras do Firewall (Portas 7777 e 9443) ativas para '$Provider'." -ForegroundColor Green
-        return
-    }
-
-    Write-Host "[REDE] Configurando liberacao das portas 7777 (Jogo) e 9443 (Portainer) no Firewall ($remoteIps)..." -ForegroundColor Yellow
-    $fwCmd = @"
-netsh advfirewall firewall delete rule name="Terraria_tModLoader_7777_TCP" >nul 2>&1
-netsh advfirewall firewall delete rule name="Terraria_tModLoader_7777_UDP" >nul 2>&1
-netsh advfirewall firewall delete rule name="Terraria_Portainer_9443_TCP" >nul 2>&1
-netsh advfirewall firewall add rule name="Terraria_tModLoader_7777_TCP" dir=in action=allow protocol=TCP localport=7777 remoteip=$remoteIps profile=any >nul
-netsh advfirewall firewall add rule name="Terraria_tModLoader_7777_UDP" dir=in action=allow protocol=UDP localport=7777 remoteip=$remoteIps profile=any >nul
-netsh advfirewall firewall add rule name="Terraria_Portainer_9443_TCP" dir=in action=allow protocol=TCP localport=9443 remoteip=$remoteIps profile=any >nul
-"@
-    try {
-        $tempBat = Join-Path $env:TEMP "terraria_fw_setup.bat"
-        Set-Content -Path $tempBat -Value $fwCmd -Encoding ASCII
-        Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$tempBat`"" -Verb RunAs -WindowStyle Hidden -Wait
-        Remove-Item $tempBat -Force -ErrorAction SilentlyContinue
-        Write-Host "[OK] Portas 7777 (TCP/UDP) e 9443 (TCP) liberadas no Firewall para ($remoteIps)!" -ForegroundColor Green
-    } catch {
-        Write-Host "[AVISO] Nao foi possivel aplicar as regras de Firewall automaticamente (Permissao recusada)." -ForegroundColor Yellow
+    if ($commandsToRun.Count -gt 0) {
+        try {
+            $tempBat = Join-Path $env:TEMP "terraria_fw_setup.bat"
+            Set-Content -Path $tempBat -Value ($commandsToRun -join "`r`n") -Encoding ASCII
+            Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$tempBat`"" -Verb RunAs -WindowStyle Hidden -Wait
+            Remove-Item $tempBat -Force -ErrorAction SilentlyContinue
+            Write-Host "[OK] Regras de Firewall atualizadas com sucesso!" -ForegroundColor Green
+        } catch {
+            Write-Host "[AVISO] Nao foi possivel aplicar as regras de Firewall automaticamente (Permissao recusada)." -ForegroundColor Yellow
+        }
     }
 }
 
@@ -252,43 +314,98 @@ function Ensure-RadminVPN {
 
 function Ensure-TailscaleContainer {
     Write-Host "[TAILSCALE] Verificando container 'vpn_tailscale' no Docker..." -ForegroundColor Cyan
+
+    $running = docker ps -q -f name=vpn_tailscale 2>$null
+    if (-not $running) {
+        Write-Host "[TAILSCALE] Container 'vpn_tailscale' nao esta em execucao. Subindo container..." -ForegroundColor Cyan
+        docker-compose up -d tailscale 2>$null
+        Start-Sleep -Seconds 3
+    }
+
     $tsIp = Get-TailscaleIP
     if ($tsIp -and $tsIp -match "^100\.") {
         Write-Host "[OK] Container Tailscale conectado! IP da rede Mesh: $tsIp" -ForegroundColor Green
         return $tsIp
     }
 
+    $hostnameVal = Get-EnvValue "TS_HOSTNAME" "terraria-tmodloader"
     $authKey = Get-EnvValue "TS_AUTHKEY" ""
-    if (-not $authKey) {
-        Write-Host "[TAILSCALE] Aguardando autenticacao do container Tailscale (sessao salva no volume 'tailscale_data')..." -ForegroundColor Yellow
-        $hostnameVal = Get-EnvValue "TS_HOSTNAME" "terraria-tmodloader"
-        Start-Process -FilePath "docker" -ArgumentList "exec vpn_tailscale tailscale up --hostname=$hostnameVal --accept-dns=false" -WindowStyle Hidden
-    }
 
-    $openedBrowser = $false
-    for ($w = 0; $w -lt 30; $w++) {
-        Start-Sleep -Seconds 2
-        $tsIp = Get-TailscaleIP
-        if ($tsIp -and $tsIp -match "^100\.") {
-            Write-Host "[OK] Container Tailscale autenticado com sucesso! IP: $tsIp" -ForegroundColor Green
-            return $tsIp
-        }
-        if (-not $openedBrowser) {
-            $tsLogs = docker logs vpn_tailscale 2>&1 | Out-String
-            if ($tsLogs -match "(https://login\.tailscale\.com/a/[a-zA-Z0-9]+)") {
+    if ($authKey) {
+        Write-Host "[TAILSCALE] Autenticando via TS_AUTHKEY configurada no .env..." -ForegroundColor Cyan
+        $null = docker exec vpn_tailscale tailscale up --hostname=$hostnameVal --authkey=$authKey --accept-dns=false 2>&1
+    } else {
+        Write-Host ""
+        Write-Host "==================================================================" -ForegroundColor Yellow
+        Write-Host "  AUTENTICACAO DO TAILSCALE VPN (CONTA NECESSARIA)" -ForegroundColor White
+        Write-Host "==================================================================" -ForegroundColor Yellow
+        Write-Host "O container Tailscale precisa ser conectado a sua conta Tailscale." -ForegroundColor Cyan
+        Write-Host "Dica: Para login silencioso automatico, gere uma Auth Key em:" -ForegroundColor Gray
+        Write-Host "-> https://login.tailscale.com/admin/settings/keys" -ForegroundColor DarkCyan
+        Write-Host ""
+        $inputKey = Read-Host "Cole sua Auth Key (tskey-auth-...) ou pressione [Enter] para autorizar via Navegador"
+        if (-not [string]::IsNullOrWhiteSpace($inputKey)) {
+            $authKey = $inputKey.Trim()
+            Set-EnvValue "TS_AUTHKEY" $authKey
+            Write-Host "[OK] Chave TS_AUTHKEY salva no .env! Conectando..." -ForegroundColor Green
+            $null = docker exec vpn_tailscale tailscale up --hostname=$hostnameVal --authkey=$authKey --accept-dns=false 2>&1
+        } else {
+            Write-Host "[TAILSCALE] Obtendo link de autorizacao do Tailscale..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 2
+
+            $loginUrl = $null
+            # 1. Tenta capturar dos logs do container
+            $cLogs = docker logs --tail 40 vpn_tailscale 2>&1 | Out-String
+            if ($cLogs -match "(https://login\.tailscale\.com/(?:a|register)/[a-zA-Z0-9_]+)") {
                 $loginUrl = $Matches[1]
+            }
+
+            # 2. Se nao encontrou nos logs, tenta via 'tailscale up'
+            if (-not $loginUrl) {
+                $upOut = docker exec vpn_tailscale tailscale up --hostname=$hostnameVal --accept-dns=false --timeout=8s 2>&1 | Out-String
+                if ($upOut -match "(https://login\.tailscale\.com/(?:a|register)/[a-zA-Z0-9_]+)") {
+                    $loginUrl = $Matches[1]
+                }
+            }
+
+            # 3. Se ainda nao encontrou, tenta 'tailscale login'
+            if (-not $loginUrl) {
+                $loginOut = docker exec vpn_tailscale tailscale login --hostname=$hostnameVal --accept-dns=false 2>&1 | Out-String
+                if ($loginOut -match "(https://login\.tailscale\.com/(?:a|register)/[a-zA-Z0-9_]+)") {
+                    $loginUrl = $Matches[1]
+                }
+            }
+
+            if ($loginUrl) {
+                Write-Host ""
                 Write-Host "==================================================================" -ForegroundColor Yellow
-                Write-Host " [ACAO UNICA] Autorize o container do servidor no Tailscale:" -ForegroundColor Yellow
+                Write-Host " [ACAO UNICA] AUTORIZE O SERVIDOR NO SEU NAVEGADOR:" -ForegroundColor Yellow
                 Write-Host " -> Link: $loginUrl" -ForegroundColor Cyan
-                Write-Host " (Dica DevOps: para autenticar sem navegador em novos servidores, preencha TS_AUTHKEY no .env)" -ForegroundColor Gray
+                Write-Host " (Abrindo navegador... Apos autorizar, o servidor continua sozinho!)" -ForegroundColor Gray
                 Write-Host "==================================================================" -ForegroundColor Yellow
                 Start-Process $loginUrl -ErrorAction SilentlyContinue
-                $openedBrowser = $true
+            } else {
+                Write-Host "[AVISO] Nao foi possivel capturar o link automaticamente." -ForegroundColor Yellow
+                Write-Host "        Verifique os logs executando: docker logs vpn_tailscale" -ForegroundColor DarkGray
             }
         }
     }
 
-    Write-Host "[AVISO] Container Tailscale ainda aguarda login (veja 'docker logs vpn_tailscale')." -ForegroundColor Yellow
+    Write-Host "[TAILSCALE] Aguardando conclusao da conexao (IP 100.x.y.z)..." -ForegroundColor Cyan
+    for ($w = 0; $w -lt 45; $w++) {
+        Start-Sleep -Seconds 2
+        $tsIp = Get-TailscaleIP
+        if ($tsIp -and $tsIp -match "^100\.") {
+            Write-Host ""
+            Write-Host "[OK] Container Tailscale autenticado com sucesso! IP: $tsIp" -ForegroundColor Green
+            return $tsIp
+        }
+        Write-Host "." -NoNewline -ForegroundColor DarkGray
+    }
+
+    Write-Host ""
+    Write-Host "[AVISO] Container Tailscale ainda nao obteve um IP 100.x.y.z a tempo." -ForegroundColor Yellow
+    Write-Host "        Se autorizou pelo navegador, a conexao pode levar alguns instantes para sincronizar." -ForegroundColor Gray
     return $null
 }
 
@@ -394,7 +511,6 @@ function Start-TerrariaServer {
     }
 
     if ($activeProvider -eq "tailscale" -or $activeProvider -eq "hybrid") {
-        Restart-TailscaleSidecar
         $tsIp = Ensure-TailscaleContainer
         Update-EnvFile $activeProvider (Get-RadminIP) $tsIp
     }
@@ -451,7 +567,7 @@ function Start-TerrariaServer {
             Write-Host " -> Painel Portainer (Tailscale)  : https://${tsIP}:9443" -ForegroundColor Gray
         }
         if (-not $radminIP -and -not $tsIP -and $activeProvider -ne "local") {
-            Write-Host " -> IP para Amigos (VPN)          : (Conecte sua VPN Radmin/Tailscale e copie o IP):7777" -ForegroundColor Yellow
+            Write-Host " -> AVISO VPN: Nenhuma VPN ativa (Radmin ou Tailscale). Amigos externos nao conseguirao conectar." -ForegroundColor Yellow
         }
         Write-Host " -> IP Local (Para voce no PC)    : 127.0.0.1:7777" -ForegroundColor White
         Write-Host " -> Painel Web Local (Portainer)  : https://localhost:9443" -ForegroundColor Gray
@@ -551,7 +667,6 @@ function Invoke-RestoreBackup {
     if ($running) {
         Write-Host "Reiniciando o servidor com o backup restaurado..." -ForegroundColor Cyan
         docker start servidor_tmodloader >$null 2>&1
-        Restart-TailscaleSidecar
         Write-Host "[OK] Servidor reiniciado!" -ForegroundColor Green
     }
 }
@@ -571,7 +686,7 @@ function Uninstall-TerrariaEnvironment {
         }
     }
 
-    $fwCmd = 'Remove-NetFirewallRule -DisplayName "Terraria_tModLoader_7777_TCP","Terraria_tModLoader_7777_UDP","Terraria_Portainer_9443_TCP" -ErrorAction SilentlyContinue'
+    $fwCmd = 'Remove-NetFirewallRule -DisplayName "Terraria_tModLoader_7777_TCP","Terraria_tModLoader_7777_UDP","Terraria_Portainer_9443_TCP","Terraria_Tailscale_41641_UDP" -ErrorAction SilentlyContinue'
     Start-Process -FilePath powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList "-NoProfile", "-Command", $fwCmd
     $left = @(Get-NetFirewallRule -DisplayName "Terraria_*" -ErrorAction SilentlyContinue).Count
     if ($left -eq 0) {
@@ -580,6 +695,7 @@ function Uninstall-TerrariaEnvironment {
         Write-Host "[AVISO] $left regra(s) de Firewall ainda existem (permissao de administrador recusada?)." -ForegroundColor Yellow
     }
     Update-EnvFile "radmin" $null $null
+    Set-EnvValue "TMOD_OFFICIAL_VERSION" ""
     Write-Host "[OK] Ambiente revertido. Docker Desktop, Radmin VPN e Tailscale nao foram desinstalados." -ForegroundColor Green
 }
 
@@ -620,15 +736,20 @@ function Send-TerrariaCommand {
     docker logs --tail 10 servidor_tmodloader
 }
 
-function Update-TerrariaServer {
-    Write-Header "VERIFICAR E ATUALIZAR IMAGENS DO SERVIDOR (DOCKER PULL)"
-    Write-Host "Esta operacao baixa as versoes mais recentes das imagens no Docker Hub:" -ForegroundColor Cyan
+function Invoke-StandardImageUpdate {
+    Write-Header "ATUALIZACAO PADRAO DAS IMAGENS (DOCKER HUB)"
+    Write-Host "Esta operacao baixa as imagens mais recentes no Docker Hub:" -ForegroundColor Cyan
     Write-Host "  - tModLoader Server (jacobsmile/tmodloader1.4:latest)" -ForegroundColor White
     Write-Host "  - Tailscale VPN (tailscale/tailscale:stable)" -ForegroundColor White
     Write-Host "  - Portainer CE (portainer/portainer-ce:lts)" -ForegroundColor White
-    Write-Host "E reconstrói a imagem local do tModLoader com base e dependencias atualizadas." -ForegroundColor Gray
     Write-Host ""
-    $confirm = Read-Host "Deseja verificar e baixar as atualizacoes agora? (S/N)"
+    $currentOfficial = Get-EnvValue "TMOD_OFFICIAL_VERSION" ""
+    if ($currentOfficial) {
+        Write-Host "[INFO] Uma versao oficial do GitHub ($currentOfficial) esta ativa no .env." -ForegroundColor Yellow
+        Write-Host "Se desejar voltar a usar a imagem pura do Docker Hub, use a opcao [3] do menu de atualizacao." -ForegroundColor Gray
+        Write-Host ""
+    }
+    $confirm = Read-Host "Deseja verificar e baixar as atualizacoes do Docker Hub agora? (S/N)"
     if ($confirm -notmatch "^[sS]") {
         Write-Host "Atualizacao cancelada." -ForegroundColor Gray
         return
@@ -666,6 +787,213 @@ function Update-TerrariaServer {
         $restart = Read-Host "Deseja iniciar o servidor agora na versao atualizada? (S/N)"
         if ($restart -match "^[sS]") {
             Start-TerrariaServer
+        }
+    }
+}
+
+function Invoke-OfficialReleaseForceUpdate {
+    Write-Header "FORCAR ATUALIZACAO COM VERSAO OFICIAL (GITHUB RELEASES)"
+    Write-Host "Consultando informacoes dos lancamentos estaveis do tModLoader no GitHub..." -ForegroundColor Cyan
+
+    $latestTag = $null
+    try {
+        $webResp = Invoke-RestMethod -Uri "https://api.github.com/repos/tModLoader/tModLoader/releases/latest" -Headers @{"User-Agent"="PowerShell-tModLoader-Server"} -TimeoutSec 5 -ErrorAction Stop
+        if ($webResp -and $webResp.tag_name) {
+            $latestTag = $webResp.tag_name.ToString().Trim()
+        }
+    } catch {
+        # Fallback caso API do GitHub sofra rate limit ou ocorra falha de conexao
+    }
+
+    if (-not $latestTag) {
+        $latestTag = "v2026.09.3.1"
+    }
+
+    Write-Host "Versao oficial mais recente detectada no GitHub: $latestTag" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Voce pode aceitar a versao detectada ou digitar uma versao especifica." -ForegroundColor Gray
+    Write-Host "Exemplos de entrada aceitos: 9.3.1 | v2026.09.3.1 | latest" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "Pressione [Enter] para usar '$latestTag' ou digite a versao desejada:" -ForegroundColor Cyan
+    $inputVer = (Read-Host "Versao").Trim()
+
+    $targetVer = if ([string]::IsNullOrWhiteSpace($inputVer)) { $latestTag } else { $inputVer }
+
+    # Normaliza formatos curtos como "9.3.1" para "v2026.09.3.1"
+    if ($targetVer -match "^(\d+)\.(\d+)\.(\d+)$") {
+        $m = [regex]::Match($targetVer, "^(\d+)\.(\d+)\.(\d+)$")
+        $month = [int]$m.Groups[1].Value
+        $patch = [int]$m.Groups[2].Value
+        $rev   = [int]$m.Groups[3].Value
+        $year = (Get-Date).Year
+        if ($latestTag -match "^v(\d{4})") {
+            $year = $matches[1]
+        }
+        $targetVer = ("v{0}.{1:D2}.{2}.{3}" -f $year, $month, $patch, $rev)
+    } elseif ($targetVer -notmatch "^v" -and $targetVer -ne "latest") {
+        $targetVer = "v" + $targetVer
+    }
+
+    Write-Host ""
+    Write-Host "==================================================================" -ForegroundColor Yellow
+    Write-Host "CONFIRMACAO DA ATUALIZACAO OFICIAL (CONTINGENCIA):" -ForegroundColor White
+    Write-Host "  -> Versao Oficial Alvo : $targetVer" -ForegroundColor Green
+    Write-Host "  -> Origem do Pacote    : GitHub Releases (tModLoader/tModLoader)" -ForegroundColor Cyan
+    Write-Host "  -> Arquivo de Download : .../releases/download/$targetVer/tModLoader.zip" -ForegroundColor Gray
+    Write-Host "==================================================================" -ForegroundColor Yellow
+    $confirm = Read-Host "Deseja baixar e compilar o servidor com esta versao oficial agora? (S/N)"
+    if ($confirm -notmatch "^[sS]") {
+        Write-Host "Operacao cancelada." -ForegroundColor Gray
+        return
+    }
+
+    Ensure-DockerEngine
+
+    $running = [bool](docker ps -q -f name=servidor_tmodloader 2>$null)
+    if ($running) {
+        Write-Host ""
+        Write-Host "[AVISO] O servidor esta rodando. Desligando com seguranca (salvando mundo)..." -ForegroundColor Yellow
+        Stop-TerrariaServer
+    }
+
+    Write-Host ""
+    Write-Host "[CONFIG] Gravando TMOD_OFFICIAL_VERSION=$targetVer no arquivo .env..." -ForegroundColor Cyan
+    Set-EnvValue "TMOD_OFFICIAL_VERSION" $targetVer
+
+    Write-Host "[BUILD] Baixando versao oficial do GitHub e reconstruindo container..." -ForegroundColor Cyan
+    docker-compose build --build-arg TMOD_OFFICIAL_VERSION=$targetVer tmodloader
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "[ERRO] Falha ao compilar container com a versao $targetVer." -ForegroundColor Red
+        Write-Host "Verifique a conexao com a internet ou se o release '$targetVer' existe no GitHub." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host ""
+    Write-Host "==================================================================" -ForegroundColor Green
+    Write-Host " [OK] SERVIDOR ATUALIZADO COM SUCESSO PARA A VERSAO OFICIAL $targetVer!" -ForegroundColor Green
+    Write-Host "==================================================================" -ForegroundColor Green
+    Write-Host "A versao do servidor agora bate com a versao da Steam ($targetVer)!" -ForegroundColor Cyan
+    Write-Host "O erro 'Your game is using 9.3.1 and the server 9.2.1' foi solucionado." -ForegroundColor Green
+
+    if ($running) {
+        Write-Host ""
+        $restart = Read-Host "Deseja iniciar o servidor agora com a nova versao? (S/N)"
+        if ($restart -match "^[sS]") {
+            Start-TerrariaServer
+        }
+    }
+}
+
+function Invoke-ResetToDefaultImage {
+    Write-Header "RESETAR PARA IMAGEM PADRAO (DOCKER HUB)"
+    $currentOfficial = Get-EnvValue "TMOD_OFFICIAL_VERSION" ""
+    if (-not $currentOfficial) {
+        Write-Host "[INFO] O servidor ja esta configurado para usar a imagem base padrao do Docker Hub." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "Versao oficial atualmente forcada: $currentOfficial" -ForegroundColor Cyan
+    Write-Host "Esta operacao ira remover a versao forcada do .env e recompilar usando a imagem pura do Docker Hub." -ForegroundColor White
+    Write-Host ""
+    $confirm = Read-Host "Deseja resetar para a imagem padrao do Docker Hub agora? (S/N)"
+    if ($confirm -notmatch "^[sS]") {
+        Write-Host "Operacao cancelada." -ForegroundColor Gray
+        return
+    }
+
+    Ensure-DockerEngine
+
+    $running = [bool](docker ps -q -f name=servidor_tmodloader 2>$null)
+    if ($running) {
+        Write-Host ""
+        Write-Host "[AVISO] O servidor esta rodando. Desligando com seguranca (salvando mundo)..." -ForegroundColor Yellow
+        Stop-TerrariaServer
+    }
+
+    Write-Host ""
+    Write-Host "[CONFIG] Limpando TMOD_OFFICIAL_VERSION no arquivo .env..." -ForegroundColor Cyan
+    Set-EnvValue "TMOD_OFFICIAL_VERSION" ""
+
+    Write-Host "[BUILD] Recompilando container com a imagem base do Docker Hub..." -ForegroundColor Cyan
+    docker-compose build --build-arg TMOD_OFFICIAL_VERSION="" tmodloader
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERRO] Falha ao recompilar container." -ForegroundColor Red
+        return
+    }
+
+    Write-Host ""
+    Write-Host "==================================================================" -ForegroundColor Green
+    Write-Host " [OK] SERVIDOR RESETADO PARA A IMAGEM PADRAO DO DOCKER HUB!" -ForegroundColor Green
+    Write-Host "==================================================================" -ForegroundColor Green
+
+    if ($running) {
+        Write-Host ""
+        $restart = Read-Host "Deseja iniciar o servidor agora? (S/N)"
+        if ($restart -match "^[sS]") {
+            Start-TerrariaServer
+        }
+    }
+}
+
+function Update-TerrariaServer {
+    while ($true) {
+        Clear-Host
+        Write-Header "CENTRAL DE ATUALIZACAO DO SERVIDOR TERRARIA (tModLoader)"
+        $currentOfficial = Get-EnvValue "TMOD_OFFICIAL_VERSION" ""
+        $activeVerLabel = if ($currentOfficial) {
+            "Versao Oficial Forcada (GitHub Releases: $currentOfficial)"
+        } else {
+            "Padrao (Docker Hub: jacobsmile/tmodloader1.4:latest)"
+        }
+
+        Write-Host "  Versao tModLoader Ativa : $activeVerLabel" -ForegroundColor Cyan
+        Write-Host "==================================================================" -ForegroundColor DarkCyan
+        Write-Host "O tModLoader na Steam dos jogadores atualiza automaticamente. Quando sai uma" -ForegroundColor Gray
+        Write-Host "atualizacao nova na Steam e o servidor ainda nao atualizou, ocorre o erro:" -ForegroundColor Gray
+        Write-Host "  'Your game is using 9.3.1 and the server 9.2.1'" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Escolha o metodo de atualizacao desejado:" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  [1] Atualizacao Padrao (Docker Hub - Imagens Base)" -ForegroundColor White
+        Write-Host "      -> Baixa as imagens mais recentes do Docker Hub (tModLoader, Tailscale, Portainer)." -ForegroundColor Gray
+        Write-Host "      -> Recomendado para manutencao de rotina quando as versoes estao alinhadas." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [2] Forcar Atualizacao Oficial do tModLoader (GitHub Releases - Contingencia)" -ForegroundColor Green
+        Write-Host "      -> Baixa a versao oficial estavel direto do GitHub do tModLoader (ex: 9.3.1 / v2026.09.3.1)." -ForegroundColor Gray
+        Write-Host "      -> Resolve NA HORA erros de versao diferente sem precisar esperar o Docker Hub!" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [3] Resetar para Imagem Padrao do Docker Hub (Remover versao forcada)" -ForegroundColor Yellow
+        Write-Host "      -> Remove a versao customizada do GitHub e volta a usar a imagem oficial do Docker Hub." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [0] Voltar ao Menu Principal" -ForegroundColor Gray
+        Write-Host "==================================================================" -ForegroundColor DarkCyan
+        Write-Host ""
+
+        $choice = (Read-Host "Escolha uma opcao de atualizacao").Trim()
+        if ($choice -eq "0" -or [string]::IsNullOrWhiteSpace($choice)) {
+            return
+        }
+
+        switch ($choice) {
+            "1" {
+                Invoke-StandardImageUpdate
+                Pause
+                return
+            }
+            "2" {
+                Invoke-OfficialReleaseForceUpdate
+                Pause
+                return
+            }
+            "3" {
+                Invoke-ResetToDefaultImage
+                Pause
+                return
+            }
+            default { }
         }
     }
 }
@@ -769,11 +1097,14 @@ function Show-InteractiveMenu {
         $tsIP = Get-TailscaleIP
         $tsText = if ($tsIP) { "${tsIP}:7777" } else { "Nao detectado" }
         $backupsCount = @(Get-ChildItem -Path (Join-Path $RootDir "Backups") -Filter "backup_*.zip" -ErrorAction SilentlyContinue).Count
+        $officialVer = Get-EnvValue "TMOD_OFFICIAL_VERSION" ""
+        $verText = if ($officialVer) { "Oficial GitHub ($officialVer)" } else { "Docker Hub (Padrao)" }
 
         Write-Host "==================================================================" -ForegroundColor Cyan
         Write-Host "         PAINEL DE CONTROLE - SERVIDOR TERRARIA (tModLoader)      " -ForegroundColor White
         Write-Host "==================================================================" -ForegroundColor Cyan
         Write-Host "  Status do Servidor : $statusText (Modo Rede: $currentProvider)"
+        Write-Host "  Versao tModLoader  : $verText"
         Write-Host "  IP Radmin VPN      : $radminText"
         Write-Host "  IP Tailscale VPN   : $tsText"
         Write-Host "  Backups Salvos     : $backupsCount / 10 (na pasta Backups/)"
@@ -788,7 +1119,7 @@ function Show-InteractiveMenu {
         Write-Host "  [8] Executar Bateria de Testes Automatizados (13 Testes)" -ForegroundColor DarkCyan
         Write-Host "  [9] Reverter configuracoes do app neste PC (Firewall, containers, imagens)" -ForegroundColor DarkYellow
         Write-Host "  [10] Alterar Provedor de Rede / VPN (Radmin / Tailscale / Hibrido / Local)" -ForegroundColor Green
-        Write-Host "  [11] Atualizar Imagens do Servidor (docker pull + rebuild --pull)" -ForegroundColor Cyan
+        Write-Host "  [11] Atualizar Servidor (Padrao Docker Hub ou Forcar Versao Oficial GitHub)" -ForegroundColor Cyan
         Write-Host "  [12] Guardiao Nameless Deity (Progresso Linear, Bosses, Objetivos e Bot Discord)" -ForegroundColor Yellow
         Write-Host "  [0] Sair" -ForegroundColor Gray
         Write-Host "==================================================================" -ForegroundColor Cyan
